@@ -526,6 +526,9 @@ func loadProfile(profile string) (*config.Manifest, string, *config.Profile, err
     if profName == "" {
         profName = manifest.Project.DefaultProfile
     }
+    if profName == "" {
+        return nil, "", nil, errors.New("no profile specified and no defaultProfile set in manifest")
+    }
 
     prof, err := config.ProfileByName(manifest, profName)
     if err != nil {
