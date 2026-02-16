@@ -3,6 +3,7 @@ package compose
 import (
     "bytes"
     "fmt"
+    "sort"
     "strings"
 
     "github.com/dever-labs/devx/internal/config"
@@ -56,7 +57,7 @@ var depImages = map[string]string{
     "redis":    "redis",
 }
 
-func Render(manifest *config.Manifest, profileName string, profile *config.Profile, rewrite RewriteOptions) (string, error) {
+func Render(manifest *config.Manifest, profileName string, profile *config.Profile, rewrite RewriteOptions, enableTelemetry bool) (string, error) {
     if manifest == nil || profile == nil {
         return "", fmt.Errorf("manifest and profile are required")
     }
@@ -68,7 +69,8 @@ func Render(manifest *config.Manifest, profileName string, profile *config.Profi
         Volumes:  map[string]Volume{},
     }
 
-    for name, dep := range profile.Deps {
+    for _, name := range sortedKeys(profile.Deps) {
+        dep := profile.Deps[name]
         image := depImages[dep.Kind]
         if dep.Version != "" {
             image = image + ":" + dep.Version
@@ -95,7 +97,21 @@ func Render(manifest *config.Manifest, profileName string, profile *config.Profi
         file.Services[name] = svc
     }
 
-    for name, svc := range profile.Services {
+    if enableTelemetry {
+        telemetryServices, telemetryVolumes := telemetryCompose(manifest, profileName, rewrite)
+        for svcName, svc := range telemetryServices {
+            if _, exists := file.Services[svcName]; exists {
+                return "", fmt.Errorf("telemetry service name collision: %s", svcName)
+            }
+            file.Services[svcName] = svc
+        }
+        for volName := range telemetryVolumes {
+            file.Volumes[volName] = Volume{}
+        }
+    }
+
+    for _, name := range sortedKeys(profile.Services) {
+        svc := profile.Services[name]
         service := Service{
             Image:       rewriteImage(svc.Image, rewrite),
             Ports:       svc.Ports,
@@ -214,4 +230,13 @@ func Normalize(data string) (string, error) {
         return "", err
     }
     return buf.String(), nil
+}
+
+func sortedKeys[T any](m map[string]T) []string {
+    keys := make([]string, 0, len(m))
+    for key := range m {
+        keys = append(keys, key)
+    }
+    sort.Strings(keys)
+    return keys
 }

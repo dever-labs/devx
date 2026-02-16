@@ -36,7 +36,7 @@ func TestRenderCompose(t *testing.T) {
         },
     }
 
-    out, err := Render(manifest, "local", profile, RewriteOptions{RegistryPrefix: "registry.local"})
+    out, err := Render(manifest, "local", profile, RewriteOptions{RegistryPrefix: "registry.local"}, false)
     if err != nil {
         t.Fatalf("render failed: %v", err)
     }

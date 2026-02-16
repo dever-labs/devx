@@ -35,6 +35,7 @@ const (
 type state struct {
     Profile string `json:"profile"`
     Runtime string `json:"runtime"`
+    Telemetry bool `json:"telemetry"`
 }
 
 func main() {
@@ -86,13 +87,13 @@ func printUsage() {
     fmt.Println("devx - cross-platform dev orchestrator")
     fmt.Println("\nUsage:")
     fmt.Println("  devx init")
-    fmt.Println("  devx up [--profile local|ci|k8s] [--build] [--pull]")
+    fmt.Println("  devx up [--profile local|ci|k8s] [--build] [--pull] [--no-telemetry]")
     fmt.Println("  devx down [--volumes]")
     fmt.Println("  devx status")
     fmt.Println("  devx logs [service] [--follow] [--since 10m] [--json]")
     fmt.Println("  devx exec <service> -- <cmd...>")
     fmt.Println("  devx doctor [--fix]")
-    fmt.Println("  devx render compose [--write]")
+    fmt.Println("  devx render compose [--write] [--no-telemetry]")
     fmt.Println("  devx lock update")
 }
 
@@ -127,6 +128,7 @@ func runUp(ctx context.Context, args []string) error {
     profile := fs.String("profile", "", "Profile to use")
     build := fs.Bool("build", false, "Build images")
     pull := fs.Bool("pull", false, "Always pull images")
+    noTelemetry := fs.Bool("no-telemetry", false, "Disable telemetry stack")
     _ = fs.Parse(args)
 
     manifest, profName, prof, err := loadProfile(*profile)
@@ -146,7 +148,8 @@ func runUp(ctx context.Context, args []string) error {
     }
 
     composePath := filepath.Join(devxDir, composeFile)
-    if err := writeCompose(composePath, manifest, profName, prof, lockfile); err != nil {
+    enableTelemetry := !*noTelemetry
+    if err := writeCompose(composePath, manifest, profName, prof, lockfile, enableTelemetry); err != nil {
         return err
     }
 
@@ -158,7 +161,7 @@ func runUp(ctx context.Context, args []string) error {
         return err
     }
 
-    _ = writeState(state{Profile: profName, Runtime: rt.Name()})
+    _ = writeState(state{Profile: profName, Runtime: rt.Name(), Telemetry: enableTelemetry})
 
     fmt.Println("Environment is up")
     return nil
@@ -179,12 +182,13 @@ func runDown(ctx context.Context, args []string) error {
         return err
     }
 
+    enableTelemetry := telemetryFromState()
     composePath := filepath.Join(devxDir, composeFile)
     if !fileExists(composePath) {
         if err := ensureDevxDir(); err != nil {
             return err
         }
-        if err := writeCompose(composePath, manifest, profName, prof, nil); err != nil {
+        if err := writeCompose(composePath, manifest, profName, prof, nil, enableTelemetry); err != nil {
             return err
         }
     }
@@ -206,11 +210,12 @@ func runStatus(ctx context.Context, args []string) error {
         return err
     }
 
+    enableTelemetry := telemetryFromState()
     composePath := filepath.Join(devxDir, composeFile)
     if err := ensureDevxDir(); err != nil {
         return err
     }
-    if err := writeCompose(composePath, manifest, profName, prof, nil); err != nil {
+    if err := writeCompose(composePath, manifest, profName, prof, nil, enableTelemetry); err != nil {
         return err
     }
 
@@ -254,11 +259,12 @@ func runLogs(ctx context.Context, args []string) error {
         return err
     }
 
+    enableTelemetry := telemetryFromState()
     composePath := filepath.Join(devxDir, composeFile)
     if err := ensureDevxDir(); err != nil {
         return err
     }
-    if err := writeCompose(composePath, manifest, profName, prof, nil); err != nil {
+    if err := writeCompose(composePath, manifest, profName, prof, nil, enableTelemetry); err != nil {
         return err
     }
 
@@ -305,11 +311,12 @@ func runExec(ctx context.Context, args []string) error {
         return err
     }
 
+    enableTelemetry := telemetryFromState()
     composePath := filepath.Join(devxDir, composeFile)
     if err := ensureDevxDir(); err != nil {
         return err
     }
-    if err := writeCompose(composePath, manifest, profName, prof, nil); err != nil {
+    if err := writeCompose(composePath, manifest, profName, prof, nil, enableTelemetry); err != nil {
         return err
     }
 
@@ -349,6 +356,7 @@ func runRender(ctx context.Context, args []string) error {
 
     fs := flag.NewFlagSet("render", flag.ExitOnError)
     write := fs.Bool("write", false, "Write to .devx/compose.yaml")
+    noTelemetry := fs.Bool("no-telemetry", false, "Disable telemetry stack")
     _ = fs.Parse(args[1:])
 
     manifest, profName, prof, err := loadProfile("")
@@ -358,7 +366,7 @@ func runRender(ctx context.Context, args []string) error {
 
     lockfile, _ := lock.Load(lockFile)
 
-    composed, err := buildCompose(manifest, profName, prof, lockfile)
+    composed, err := buildCompose(manifest, profName, prof, lockfile, !*noTelemetry)
     if err != nil {
         return err
     }
@@ -368,7 +376,7 @@ func runRender(ctx context.Context, args []string) error {
             return err
         }
         composePath := filepath.Join(devxDir, composeFile)
-        return os.WriteFile(composePath, []byte(composed), 0644)
+        return writeCompose(composePath, manifest, profName, prof, lockfile, !*noTelemetry)
     }
 
     fmt.Print(composed)
@@ -439,15 +447,35 @@ func loadProfile(profile string) (*config.Manifest, string, *config.Profile, err
     return manifest, profName, prof, nil
 }
 
-func writeCompose(path string, manifest *config.Manifest, profName string, prof *config.Profile, lockfile *lock.Lockfile) error {
-    composed, err := buildCompose(manifest, profName, prof, lockfile)
+func writeCompose(path string, manifest *config.Manifest, profName string, prof *config.Profile, lockfile *lock.Lockfile, enableTelemetry bool) error {
+    composed, err := buildCompose(manifest, profName, prof, lockfile, enableTelemetry)
     if err != nil {
         return err
     }
-    return os.WriteFile(path, []byte(composed), 0644)
+    if err := os.WriteFile(path, []byte(composed), 0644); err != nil {
+        return err
+    }
+
+    assets := compose.TelemetryAssets(enableTelemetry)
+    if len(assets) == 0 {
+        return nil
+    }
+
+    baseDir := filepath.Dir(path)
+    for _, asset := range assets {
+        assetPath := filepath.Join(baseDir, asset.Path)
+        if err := os.MkdirAll(filepath.Dir(assetPath), 0755); err != nil {
+            return err
+        }
+        if err := os.WriteFile(assetPath, asset.Content, 0644); err != nil {
+            return err
+        }
+    }
+
+    return nil
 }
 
-func buildCompose(manifest *config.Manifest, profName string, prof *config.Profile, lockfile *lock.Lockfile) (string, error) {
+func buildCompose(manifest *config.Manifest, profName string, prof *config.Profile, lockfile *lock.Lockfile, enableTelemetry bool) (string, error) {
     g, err := graph.Build(prof)
     if err != nil {
         return "", err
@@ -461,7 +489,7 @@ func buildCompose(manifest *config.Manifest, profName string, prof *config.Profi
         Lockfile:       lockfile,
     }
 
-    return compose.Render(manifest, profName, prof, rewrite)
+    return compose.Render(manifest, profName, prof, rewrite, enableTelemetry)
 }
 
 func ensureDevxDir() error {
@@ -509,6 +537,26 @@ func writeState(s state) error {
         return err
     }
     return os.WriteFile(filepath.Join(devxDir, stateFile), data, 0644)
+}
+
+func readState() *state {
+    data, err := os.ReadFile(filepath.Join(devxDir, stateFile))
+    if err != nil {
+        return nil
+    }
+    var s state
+    if err := json.Unmarshal(data, &s); err != nil {
+        return nil
+    }
+    return &s
+}
+
+func telemetryFromState() bool {
+    st := readState()
+    if st == nil {
+        return true
+    }
+    return st.Telemetry
 }
 
 func streamLogs(reader io.Reader, jsonOut bool) error {
@@ -590,7 +638,7 @@ func checkHTTP(url string) bool {
 }
 
 func collectImages(manifest *config.Manifest, profileName string, prof *config.Profile) ([]string, error) {
-    composed, err := buildCompose(manifest, profileName, prof, nil)
+    composed, err := buildCompose(manifest, profileName, prof, nil, true)
     if err != nil {
         return nil, err
     }

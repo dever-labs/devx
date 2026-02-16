@@ -13,7 +13,7 @@ A cross-platform dev orchestrator CLI for any repo. Single-binary, container-fir
 ## Commands
 
 - `devx init`
-- `devx up [--profile local|ci|k8s] [--build] [--pull]`
+- `devx up [--profile local|ci|k8s] [--build] [--pull] [--no-telemetry]`
 - `devx down [--volumes]`
 - `devx status`
 - `devx logs [service] [--follow] [--since 10m] [--json]`
@@ -21,6 +21,12 @@ A cross-platform dev orchestrator CLI for any repo. Single-binary, container-fir
 - `devx doctor [--fix]`
 - `devx render compose [--write]`
 - `devx lock update`
+
+## Telemetry (Aspire-lite)
+
+devx starts a lightweight telemetry UI stack (Grafana + Loki + Prometheus) by default. Only Grafana is published, and it uses a random host port to avoid conflicts. Loki and Prometheus stay internal.
+
+Disable telemetry with `devx up --no-telemetry`. Use `devx status` to see the Grafana URL.
 
 ## Offline mode
 
