@@ -55,4 +55,3 @@ func runStatus(ctx context.Context, args []string) error {
 	ui.PrintTable(os.Stdout, headers, rows)
 	return nil
 }
-

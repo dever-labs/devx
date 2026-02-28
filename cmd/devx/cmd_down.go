@@ -61,4 +61,3 @@ func runDownK8s(ctx context.Context) error {
 	fmt.Println("Kubernetes resources deleted")
 	return nil
 }
-

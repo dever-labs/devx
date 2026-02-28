@@ -113,4 +113,3 @@ func TestLoadProfile_NoManifest(t *testing.T) {
 		t.Fatal("expected error when devx.yaml is missing")
 	}
 }
-

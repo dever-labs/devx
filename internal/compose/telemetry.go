@@ -74,24 +74,24 @@ func telemetryCompose(manifest *config.Manifest, profileName string, rewrite Rew
 	services := map[string]Service{}
 	volumes := map[string]Volume{}
 
-	grafanaName  := telemetryName + "-grafana"
-	lokiName     := telemetryName + "-loki"
-	promName     := telemetryName + "-prometheus"
-	alloyName    := telemetryName + "-alloy"
+	grafanaName := telemetryName + "-grafana"
+	lokiName := telemetryName + "-loki"
+	promName := telemetryName + "-prometheus"
+	alloyName := telemetryName + "-alloy"
 	cAdvisorName := telemetryName + "-cadvisor"
 
 	grafanaPorts := []string{"3000"}
 
 	services[grafanaName] = Service{
-		Image:      rewriteImage(grafanaImage, rewrite),
-		Ports:      grafanaPorts,
-		DependsOn:  []string{lokiName, promName},
-		Labels:     labels(manifest, profileName, grafanaName),
-		Networks:   []string{"devx_default"},
+		Image:     rewriteImage(grafanaImage, rewrite),
+		Ports:     grafanaPorts,
+		DependsOn: []string{lokiName, promName},
+		Labels:    labels(manifest, profileName, grafanaName),
+		Networks:  []string{"devx_default"},
 		Environment: map[string]string{
-			"GF_AUTH_ANONYMOUS_ENABLED":   "true",
-			"GF_AUTH_ANONYMOUS_ORG_ROLE":  "Admin",
-			"GF_USERS_DEFAULT_THEME":      "light",
+			"GF_AUTH_ANONYMOUS_ENABLED":      "true",
+			"GF_AUTH_ANONYMOUS_ORG_ROLE":     "Admin",
+			"GF_USERS_DEFAULT_THEME":         "light",
 			"GF_ANALYTICS_REPORTING_ENABLED": "false",
 		},
 		Volumes: []string{
@@ -103,10 +103,10 @@ func telemetryCompose(manifest *config.Manifest, profileName string, rewrite Rew
 	}
 
 	services[lokiName] = Service{
-		Image:      rewriteImage(lokiImage, rewrite),
-		Labels:     labels(manifest, profileName, lokiName),
-		Networks:   []string{"devx_default"},
-		Command:    []string{"-config.file=/etc/loki/local-config.yaml"},
+		Image:    rewriteImage(lokiImage, rewrite),
+		Labels:   labels(manifest, profileName, lokiName),
+		Networks: []string{"devx_default"},
+		Command:  []string{"-config.file=/etc/loki/local-config.yaml"},
 		Volumes: []string{
 			telemetryName + "-loki-data:/loki",
 			"./telemetry/loki-config.yaml:/etc/loki/local-config.yaml:ro",
@@ -1401,4 +1401,3 @@ threading.Thread(target=refresh_loop, daemon=True).start()
 HTTPServer(('', 9101), Handler).serve_forever()
 `
 }
-

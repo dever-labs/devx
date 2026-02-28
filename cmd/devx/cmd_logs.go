@@ -57,4 +57,3 @@ func runLogs(ctx context.Context, args []string) error {
 
 	return streamLogs(reader, *jsonOut)
 }
-

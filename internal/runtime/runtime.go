@@ -7,15 +7,15 @@ import (
 )
 
 type UpOptions struct {
-    Build bool
-    Pull  bool
+	Build bool
+	Pull  bool
 }
 
 type LogsOptions struct {
-    Service string
-    Follow  bool
-    Since   string
-    JSON    bool
+	Service string
+	Follow  bool
+	Since   string
+	JSON    bool
 }
 
 type ServiceStatus struct {
@@ -35,25 +35,25 @@ type Publisher struct {
 }
 
 type Runtime interface {
-    Name() string
-    Detect(ctx context.Context) (bool, error)
-    Up(ctx context.Context, composePath string, projectName string, opts UpOptions) error
-    Down(ctx context.Context, composePath string, projectName string, removeVolumes bool) error
-    Logs(ctx context.Context, composePath string, projectName string, opts LogsOptions) (io.ReadCloser, error)
-    Exec(ctx context.Context, composePath string, projectName string, service string, cmd []string) (int, error)
-    Status(ctx context.Context, composePath string, projectName string) ([]ServiceStatus, error)
+	Name() string
+	Detect(ctx context.Context) (bool, error)
+	Up(ctx context.Context, composePath string, projectName string, opts UpOptions) error
+	Down(ctx context.Context, composePath string, projectName string, removeVolumes bool) error
+	Logs(ctx context.Context, composePath string, projectName string, opts LogsOptions) (io.ReadCloser, error)
+	Exec(ctx context.Context, composePath string, projectName string, service string, cmd []string) (int, error)
+	Status(ctx context.Context, composePath string, projectName string) ([]ServiceStatus, error)
 }
 
 type DigestResolver interface {
-    ResolveImageDigest(ctx context.Context, image string) (string, error)
+	ResolveImageDigest(ctx context.Context, image string) (string, error)
 }
 
 type RuntimeInfo struct {
-    Name      string
-    Available bool
-    Version   string
-    Compose   bool
-    Details   string
+	Name      string
+	Available bool
+	Version   string
+	Compose   bool
+	Details   string
 }
 
 var ErrNoRuntime = errors.New("no container runtime detected")
