@@ -13,23 +13,35 @@ devx down        # tear down
 
 ## Installation
 
-Build from source (requires Go 1.22+):
-
+**Linux / macOS**
 ```sh
-go build ./cmd/devx
+curl -fsSL https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.sh | sh
 ```
 
-Cross-compile for all platforms:
-
-```sh
-# Linux/macOS
-./scripts/build.sh
-
-# Windows
-.\scripts\build.ps1
+**Windows (PowerShell)**
+```powershell
+iwr https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.ps1 | iex
 ```
 
-Place the resulting binary somewhere on your `$PATH`.
+**npm**
+```sh
+npm install -g @dever-labs/devx
+```
+
+**Homebrew**
+```sh
+brew tap dever-labs/tap https://github.com/dever-labs/homebrew-tap
+brew install devx
+```
+
+**Chocolatey / WinGet**
+```powershell
+choco install devx
+winget install dever-labs.devx
+```
+
+Pre-built binaries for all platforms are also available on the [Releases](https://github.com/dever-labs/dever/releases) page — download, make executable, and place on your `PATH`.
+See [docs/install.md](docs/install.md) for all methods including step-by-step manual setup.
 
 ---
 

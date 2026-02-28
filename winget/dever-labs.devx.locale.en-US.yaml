@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: dever-labs.devx
+PackageVersion: "{{VERSION}}"
+PackageLocale: en-US
+Publisher: dever-labs
+PublisherUrl: https://github.com/dever-labs
+PackageName: devx
+PackageUrl: https://github.com/dever-labs/dever
+License: MIT
+LicenseUrl: https://github.com/dever-labs/dever/blob/main/LICENSE
+ShortDescription: Cross-platform dev environment orchestrator
+Description: >-
+  devx lets you define your services, dependencies and telemetry stack in a
+  single devx.yaml and spin everything up with one command. Supports Docker
+  Compose, Kubernetes rendering, built-in Grafana/Loki/Prometheus telemetry,
+  and multi-profile environments.
+Moniker: devx
+Tags:
+  - docker
+  - compose
+  - developer-tools
+  - cli
+  - devops
+  - kubernetes
+ReleaseNotesUrl: https://github.com/dever-labs/dever/releases/tag/v{{VERSION}}
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

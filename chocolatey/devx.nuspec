@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>devx</id>
+    <version>0.0.0</version>
+    <title>devx</title>
+    <authors>dever-labs</authors>
+    <owners>dever-labs</owners>
+    <projectUrl>https://github.com/dever-labs/dever</projectUrl>
+    <licenseUrl>https://github.com/dever-labs/dever/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>devx is a cross-platform developer environment orchestrator. Define your services, dependencies and telemetry stack in a single devx.yaml and spin everything up with one command.</description>
+    <summary>Cross-platform dev environment orchestrator</summary>
+    <tags>devx docker compose developer-tools cli devops</tags>
+    <releaseNotes>https://github.com/dever-labs/dever/releases</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

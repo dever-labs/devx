@@ -6,6 +6,9 @@ import (
 	"os"
 )
 
+// version is set at build time via -ldflags "-X main.version=v1.2.3"
+var version = "dev"
+
 const (
 	manifestFile = "devx.yaml"
 	devxDir      = ".devx"
@@ -51,6 +54,9 @@ func main() {
 		err = runRender(ctx, args)
 	case "lock":
 		err = runLock(ctx, args)
+	case "version", "--version", "-v":
+		fmt.Println("devx " + version)
+		return
 	case "help", "-h", "--help":
 		printUsage()
 		return
@@ -79,4 +85,5 @@ func printUsage() {
 	fmt.Println("  devx render compose [--write] [--no-telemetry]")
 	fmt.Println("  devx render k8s [--profile name] [--namespace ns] [--write]")
 	fmt.Println("  devx lock update")
+	fmt.Println("  devx version")
 }

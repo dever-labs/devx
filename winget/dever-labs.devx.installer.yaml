@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: dever-labs.devx
+PackageVersion: "{{VERSION}}"
+InstallerType: portable
+Commands:
+  - devx
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/dever-labs/dever/releases/download/v{{VERSION}}/devx-windows-amd64.exe
+    InstallerSha256: "{{SHA256_WINDOWS_AMD64}}"
+  - Architecture: arm64
+    InstallerUrl: https://github.com/dever-labs/dever/releases/download/v{{VERSION}}/devx-windows-arm64.exe
+    InstallerSha256: "{{SHA256_WINDOWS_ARM64}}"
+ManifestType: installer
+ManifestVersion: 1.6.0
