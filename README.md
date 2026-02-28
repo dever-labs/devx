@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/dever-labs/dever/actions/workflows/ci.yml/badge.svg)](https://github.com/dever-labs/dever/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/dever-labs/devx)](https://goreportcard.com/report/github.com/dever-labs/devx)
+[![Go Report Card](https://goreportcard.com/badge/github.com/dever-labs/dever)](https://goreportcard.com/report/github.com/dever-labs/dever)
 
 **devx** is a single-binary, cross-platform dev orchestrator for any repo. Define your services and dependencies once in `devx.yaml`, then spin up identical environments with one command — locally, in CI, or on Kubernetes.
 
