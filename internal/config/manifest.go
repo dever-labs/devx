@@ -19,20 +19,50 @@ type Manifest struct {
 	// Setup declares ordered host-side commands to run after tool installation.
 	// Use `devx setup` to execute. RunOnce steps are skipped when unchanged.
 	Setup []SetupStep `yaml:"setup,omitempty"`
+	// Scripts declares named shell commands runnable with `devx run <name>`.
+	Scripts []Script `yaml:"scripts,omitempty"`
 }
 
-// AIConfig holds optional AI provider settings used by 'devx export' and
-// automatic connection string detection via the dep connect block.
+// Script is a named, runnable shell command declared in devx.yaml.
+// Run with: devx run <name>
+type Script struct {
+	Name      string `yaml:"name"`
+	Run       string `yaml:"run"`
+	Desc      string `yaml:"desc,omitempty"`
+	Workdir   string `yaml:"workdir,omitempty"`
+	// Container controls where the script runs when a devcontainer is present.
+	//   auto  (default) — run inside the devcontainer if it is running, host otherwise
+	//   true             — always run inside the devcontainer (fail if not running)
+	//   false            — always run on the host
+	Container string `yaml:"container,omitempty"` // auto | true | false
+}
+
+// AIConfig holds optional AI provider settings used by 'devx export',
+// automatic connection string detection, and local inference setup.
 // Credentials are read from environment variables:
 //
 //	openai:       OPENAI_API_KEY
 //	anthropic:    ANTHROPIC_API_KEY
 //	azure-openai: AZURE_OPENAI_KEY
-//	ollama:       no auth required
+//	ollama/local: no auth required
 type AIConfig struct {
-	Provider string `yaml:"provider"` // openai | anthropic | ollama | azure-openai
-	Model    string `yaml:"model"`
-	BaseURL  string `yaml:"baseURL,omitempty"` // override endpoint (e.g. Ollama or Azure)
+	Provider string        `yaml:"provider"` // openai | anthropic | ollama | azure-openai | local
+	Model    string        `yaml:"model"`
+	BaseURL  string        `yaml:"baseURL,omitempty"` // override endpoint
+	Local    *LocalAIConfig `yaml:"local,omitempty"`
+}
+
+// LocalAIConfig configures the local inference backend used by 'devx ai setup/status'.
+type LocalAIConfig struct {
+	// Backend selects the inference engine: mlx | ollama | auto (default).
+	// auto picks MLX on Apple Silicon and Ollama elsewhere.
+	Backend string `yaml:"backend,omitempty"`
+	// Model overrides the main chat/reasoning model for local inference.
+	// Defaults to AIConfig.Model.
+	Model string `yaml:"model,omitempty"`
+	// AutocompleteModel is the fast model used for tab completion.
+	// Defaults to qwen2.5-coder:14b.
+	AutocompleteModel string `yaml:"autocompleteModel,omitempty"`
 }
 
 type Project struct {

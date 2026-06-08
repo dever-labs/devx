@@ -95,3 +95,46 @@ jobs:
             dist/devx-*
             dist/checksums.txt
           generate_release_notes: true
+
+  update-homebrew:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Combine checksums
+        run: cat dist/*.sha256 > dist/checksums.txt
+
+      - name: Update Formula
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+
+          DARWIN_ARM64=$(grep "devx-darwin-arm64$" dist/checksums.txt | awk '{print $1}')
+          DARWIN_AMD64=$(grep "devx-darwin-amd64$" dist/checksums.txt | awk '{print $1}')
+          LINUX_ARM64=$(grep "devx-linux-arm64$"  dist/checksums.txt | awk '{print $1}')
+          LINUX_AMD64=$(grep "devx-linux-amd64$"  dist/checksums.txt | awk '{print $1}')
+
+          git clone \
+            "https://x-access-token:${GH_TOKEN}@github.com/dever-labs/homebrew-tap.git" \
+            tap
+          cd tap
+          mkdir -p Formula
+
+          python3 "$GITHUB_WORKSPACE/scripts/generate-formula.py" \
+            "$VERSION" "$DARWIN_ARM64" "$DARWIN_AMD64" "$LINUX_ARM64" "$LINUX_AMD64" \
+            > Formula/devx.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/devx.rb
+          git commit -m "chore: bump devx to ${TAG}"
+          git push

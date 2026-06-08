@@ -62,6 +62,18 @@ func main() {
 		err = runProviders(ctx, args)
 	case "export":
 		err = runExport(ctx, args)
+	case "ai":
+		err = runAI(ctx, args)
+	case "dev":
+		err = runDev(ctx, args)
+	case "run":
+		err = runRun(ctx, args)
+	case "clone":
+		err = runClone(ctx, args)
+	case "update":
+		err = runUpdate(ctx, args)
+	case "completion":
+		err = runCompletion(args)
 	case "version", "--version", "-v":
 		fmt.Println("devx " + version)
 		return
@@ -85,18 +97,26 @@ func printUsage() {
 	fmt.Println("\nUsage:")
 	fmt.Println("  devx init")
 	fmt.Println("  devx setup [--fix] [--json]")
-	fmt.Println("  devx up [--profile local|ci|k8s] [--build] [--pull] [--no-telemetry]")
+	fmt.Println("  devx run [script]                  run a script from devx.yaml")
+	fmt.Println("  devx clone <repo> [dir]            clone repo and run devx setup")
+	fmt.Println("  devx up [--profile local|ci|k8s] [--build] [--pull]")
 	fmt.Println("  devx down [--volumes]")
 	fmt.Println("  devx status [--json]")
 	fmt.Println("  devx logs [service] [--follow] [--since 10m] [--json]")
 	fmt.Println("  devx exec <service> -- <cmd...>")
 	fmt.Println("  devx doctor [--fix] [--json]")
 	fmt.Println("  devx validate [--file path]")
-	fmt.Println("  devx render compose [--write] [--no-telemetry]")
-	fmt.Println("  devx render k8s [--profile name] [--namespace ns] [--write]")
+	fmt.Println("  devx render compose|k8s [--write]")
 	fmt.Println("  devx lock update")
-	fmt.Println("  devx providers install")
-	fmt.Println("  devx providers list")
-	fmt.Println("  devx export --format compose|k8s|helm|terraform [--profile name] [--out dir]")
+	fmt.Println("  devx providers install|list")
+	fmt.Println("  devx export --format compose|k8s|helm|terraform [--profile name]")
+	fmt.Println("  devx ai                            AI setup wizard")
+	fmt.Println("  devx ai setup|status|reset")
+	fmt.Println("  devx dev                           devcontainer info")
+	fmt.Println("  devx dev build|rebuild [image] [--no-cache]")
+	fmt.Println("  devx dev up [--recreate]")
+	fmt.Println("  devx dev open|exec")
+	fmt.Println("  devx update [--check]              update devx to latest version")
+	fmt.Println("  devx completion bash|zsh|fish      generate shell completions")
 	fmt.Println("  devx version")
 }
