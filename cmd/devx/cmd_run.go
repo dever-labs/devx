@@ -145,6 +145,7 @@ func dispatchScript(s config.Script, extraArgs []string) error {
 }
 
 // execScriptOnHost runs the script command via the system shell on the host.
+// It automatically loads .env from the script's workdir (or CWD) before running.
 func execScriptOnHost(s config.Script, extraArgs []string) error {
 	command := s.Run
 	if len(extraArgs) > 0 {
@@ -165,6 +166,13 @@ func execScriptOnHost(s config.Script, extraArgs []string) error {
 		}
 		cmd.Dir = abs
 	}
+
+	// Load .env and inject into the child process environment.
+	env := os.Environ()
+	for k, v := range loadDotEnvToMap(dotEnvPath(s.Workdir)) {
+		env = append(env, k+"="+v)
+	}
+	cmd.Env = env
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

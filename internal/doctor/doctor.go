@@ -13,6 +13,7 @@ import (
 
 	"github.com/dever-labs/devx/internal/config"
 	"github.com/dever-labs/devx/internal/k8s"
+	"github.com/dever-labs/devx/internal/localai"
 	"github.com/dever-labs/devx/internal/runtime"
 	"github.com/dever-labs/devx/internal/runtime/docker"
 	"github.com/dever-labs/devx/internal/runtime/podman"
@@ -85,6 +86,10 @@ func Run(ctx context.Context, opts Options) Report {
 		toolChecks := checkTools(ctx, opts.Manifest, opts.Fix)
 		checks = append(checks, toolChecks...)
 	}
+
+	// Devcontainer CLI + AI backend checks (independent of manifest).
+	checks = append(checks, checkDevcontainerCLI())
+	checks = append(checks, checkAI()...)
 
 	sort.SliceStable(checks, func(i, j int) bool {
 		return checks[i].Name < checks[j].Name
@@ -244,5 +249,76 @@ func checkKubectl() Check {
 	}
 
 	return Check{Name: "kubectl", Status: "PASS", Detail: "kubectl available"}
+}
+
+// checkDevcontainerCLI verifies the @devcontainers/cli npm package is installed.
+func checkDevcontainerCLI() Check {
+	cmd := exec.Command("devcontainer", "--version")
+	if err := cmd.Run(); err != nil {
+		return Check{
+			Name:   "devcontainer CLI",
+			Status: "WARN",
+			Detail: "not found — install with: npm install -g @devcontainers/cli",
+		}
+	}
+	return Check{Name: "devcontainer CLI", Status: "PASS", Detail: "devcontainer CLI available"}
+}
+
+// checkAI reads .devx/ai.yaml and probes the configured AI backend.
+func checkAI() []Check {
+	cfg, err := localai.LoadSavedAIConfig()
+	if err != nil {
+		return []Check{{Name: "AI config", Status: "WARN", Detail: "could not read .devx/ai.yaml: " + err.Error()}}
+	}
+	if cfg == nil {
+		return []Check{{Name: "AI config", Status: "WARN", Detail: "not configured — run 'devx ai' to set up"}}
+	}
+
+	checks := []Check{{
+		Name:   "AI config",
+		Status: "PASS",
+		Detail: fmt.Sprintf("provider=%s tool=%s model=%s", cfg.Provider, cfg.Tool, cfg.Model),
+	}}
+
+	// Check the AI tool binary exists.
+	toolBin := map[string]string{
+		"aider":      "aider",
+		"claude-code": "claude",
+		"codex":      "codex",
+		"gh-copilot": "gh",
+	}
+	if bin, ok := toolBin[cfg.Tool]; ok {
+		if _, lookErr := exec.LookPath(bin); lookErr != nil {
+			checks = append(checks, Check{
+				Name:   "AI tool: " + cfg.Tool,
+				Status: "WARN",
+				Detail: bin + " not found in PATH",
+			})
+		} else {
+			checks = append(checks, Check{Name: "AI tool: " + cfg.Tool, Status: "PASS"})
+		}
+	}
+
+	// For local/remote providers, probe the backend.
+	if cfg.Provider == "local" || cfg.Provider == "remote" {
+		status, probeErr := localai.DetectWithEndpoint(cfg.Backend, cfg.Endpoint)
+		if probeErr != nil {
+			checks = append(checks, Check{Name: "AI backend", Status: "WARN", Detail: probeErr.Error()})
+		} else if status == nil {
+			hint := "run 'devx ai setup' to start"
+			if cfg.Provider == "remote" {
+				hint = "check that " + cfg.Endpoint + " is reachable"
+			}
+			checks = append(checks, Check{Name: "AI backend", Status: "WARN", Detail: "not running — " + hint})
+		} else {
+			detail := fmt.Sprintf("%s at %s", status.Backend, status.URL)
+			if status.Model != "" {
+				detail += " model=" + status.Model
+			}
+			checks = append(checks, Check{Name: "AI backend", Status: "PASS", Detail: detail})
+		}
+	}
+
+	return checks
 }
 

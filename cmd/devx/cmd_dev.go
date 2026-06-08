@@ -34,6 +34,12 @@ func runDev(_ context.Context, args []string) error {
 		return runDevOpen()
 	case "exec":
 		return runDevExec(rest)
+	case "logs":
+		return runDevLogs(rest)
+	case "ps":
+		return runDevPS()
+	case "shell":
+		return runDevShell()
 	case "help", "-h", "--help":
 		printDevUsage()
 		return nil
@@ -413,6 +419,119 @@ func runDevcontainerCLI(args ...string) error {
 	return cmd.Run()
 }
 
+// ── Logs ──────────────────────────────────────────────────────────────────────
+
+func runDevLogs(args []string) error {
+	fs := flag.NewFlagSet("dev logs", flag.ExitOnError)
+	follow := fs.Bool("follow", false, "Follow log output (like tail -f)")
+	_ = fs.Parse(args)
+
+	id, err := devcontainerID()
+	if err != nil {
+		return err
+	}
+
+	dockerArgs := []string{"logs", id}
+	if *follow {
+		dockerArgs = append(dockerArgs, "--follow")
+	}
+	cmd := exec.Command("docker", dockerArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+// ── PS ────────────────────────────────────────────────────────────────────────
+
+func runDevPS() error {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return fmt.Errorf("docker not found in PATH")
+	}
+
+	out, err := exec.Command("docker", "ps",
+		"--filter", "label=devcontainer.local_folder",
+		"--format", `{{.Names}}\t{{.Status}}\t{{.Label "devcontainer.local_folder"}}`,
+	).Output()
+	if err != nil {
+		return fmt.Errorf("docker ps failed: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
+		fmt.Println("No devcontainers running.")
+		return nil
+	}
+
+	fmt.Printf("%-40s  %-20s  %s\n", "Container", "Status", "Workspace")
+	fmt.Println(strings.Repeat("─", 100))
+	for _, line := range lines {
+		parts := strings.SplitN(line, `\t`, 3)
+		name, status, folder := "", "", ""
+		if len(parts) > 0 {
+			name = parts[0]
+		}
+		if len(parts) > 1 {
+			status = parts[1]
+		}
+		if len(parts) > 2 {
+			folder = parts[2]
+		}
+		// Shorten home dir.
+		if home, _ := os.UserHomeDir(); home != "" {
+			folder = strings.Replace(folder, home, "~", 1)
+		}
+		fmt.Printf("%-40s  %-20s  %s\n", name, status, folder)
+	}
+	return nil
+}
+
+// ── Shell ─────────────────────────────────────────────────────────────────────
+
+func runDevShell() error {
+	if err := requireDevcontainerCLI(); err != nil {
+		return err
+	}
+	if _, _, err := loadDevcontainerJSON(); err != nil {
+		return err
+	}
+	// Try bash first, fall back to sh.
+	for _, shell := range []string{"/bin/bash", "/bin/sh"} {
+		args := []string{"exec", "--workspace-folder", ".", "--", shell}
+		cmd := exec.Command("devcontainer", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("could not start shell in devcontainer")
+}
+
+// devcontainerID returns the Docker container ID for the current workspace.
+func devcontainerID() (string, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return "", fmt.Errorf("docker not found in PATH")
+	}
+	abs, err := filepath.Abs(".")
+	if err != nil {
+		return "", err
+	}
+	out, err := exec.Command("docker", "ps",
+		"--filter", "label=devcontainer.local_folder="+abs,
+		"--format", "{{.ID}}",
+	).Output()
+	if err != nil {
+		return "", fmt.Errorf("docker ps failed: %w", err)
+	}
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return "", fmt.Errorf("no devcontainer running for %s\n  Start it with: devx dev up", abs)
+	}
+	return strings.SplitN(id, "\n", 2)[0], nil
+}
+
 // ── Usage ─────────────────────────────────────────────────────────────────────
 
 func printDevUsage() {
@@ -428,6 +547,9 @@ func printDevUsage() {
 	fmt.Println("  devx dev up [--recreate]         start the devcontainer")
 	fmt.Println("  devx dev open                    open in VS Code / Cursor")
 	fmt.Println("  devx dev exec -- <cmd> [args]    run a command inside the container")
+	fmt.Println("  devx dev shell                   open an interactive shell in the container")
+	fmt.Println("  devx dev logs [--follow]         stream container logs")
+	fmt.Println("  devx dev ps                      list all running devcontainers on this host")
 	fmt.Println()
 	fmt.Println("In a devcontainers base-image repo (images/<name>/devcontainer.json):")
 	fmt.Println("  devx dev build go-dev            build a single image")

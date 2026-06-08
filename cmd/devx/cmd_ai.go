@@ -2,12 +2,17 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dever-labs/devx/internal/localai"
 )
@@ -29,6 +34,10 @@ func runAI(_ context.Context, args []string) error {
 		return runAIStatus(rest)
 	case "reset":
 		return runAIReset()
+	case "model":
+		return runAIModel(rest)
+	case "chat":
+		return runAIChat(rest)
 	case "help", "-h", "--help":
 		printAIUsage()
 		return nil
@@ -68,6 +77,7 @@ func runAIWizard(reader *bufio.Reader) error {
 		"Where do you want to run AI?",
 		[]string{
 			"Local   — models run on this machine, private, no API costs",
+			"Remote  — shared team inference server (Ollama/vLLM endpoint)",
 			"Cloud   — hosted API (Claude, OpenAI, GitHub Copilot)",
 		}, 0)
 	if err != nil {
@@ -76,9 +86,12 @@ func runAIWizard(reader *bufio.Reader) error {
 	fmt.Println()
 
 	var cfg *localai.SavedAIConfig
-	if providerTypeIdx == 0 {
+	switch providerTypeIdx {
+	case 0:
 		cfg, err = wizardLocal(reader)
-	} else {
+	case 1:
+		cfg, err = wizardRemote(reader)
+	default:
 		cfg, err = wizardCloud(reader)
 	}
 	if err != nil || cfg == nil {
@@ -97,6 +110,12 @@ func runAIWizard(reader *bufio.Reader) error {
 		fmt.Fprintf(os.Stderr, "warning: could not save config: %v\n", err)
 	} else {
 		fmt.Printf("Config saved to %s\n", localai.AIConfigPath)
+	}
+	fmt.Println()
+
+	// Write Continue.dev config so the VS Code extension connects automatically.
+	if err := localai.WriteContinueConfig(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write Continue.dev config: %v\n", err)
 	}
 	fmt.Println()
 
@@ -196,7 +215,47 @@ func wizardLocal(reader *bufio.Reader) (*localai.SavedAIConfig, error) {
 	}, nil
 }
 
-// ── Cloud wizard path ────────────────────────────────────────────────────────────────────
+// ── Remote wizard path ────────────────────────────────────────────────────────────────────
+
+func wizardRemote(reader *bufio.Reader) (*localai.SavedAIConfig, error) {
+	fmt.Println("Enter the base URL of your team's inference server.")
+	fmt.Println("Examples:")
+	fmt.Println("  http://ai.internal:11434   (Ollama)")
+	fmt.Println("  http://ai.internal:8080    (MLX-LM)")
+	fmt.Println("  http://vllm.internal:8000  (vLLM)")
+	fmt.Println()
+
+	endpoint, err := promptString(reader, "Endpoint URL", "http://ai.internal:11434")
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println()
+
+	// Probe connectivity.
+	fmt.Printf("Checking %s ... ", endpoint)
+	status, _ := localai.DetectWithEndpoint(localai.BackendRemote, endpoint)
+	if status != nil {
+		fmt.Printf("✓  reachable (%s)\n", status.Provider)
+	} else {
+		fmt.Println("✗  not reachable — you can continue but AI will fail until it's up")
+	}
+	fmt.Println()
+
+	model, err := promptString(reader, "Default model name", "qwen2.5-coder:14b")
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println()
+
+	return &localai.SavedAIConfig{
+		Provider: "remote",
+		Backend:  localai.BackendRemote,
+		Endpoint: endpoint,
+		Model:    model,
+	}, nil
+}
+
+// ── Cloud wizard path ──────────────────────────────────────────────────────────────────────
 
 func wizardCloud(reader *bufio.Reader) (*localai.SavedAIConfig, error) {
 	providers := localai.DetectCloudProviders()
@@ -355,7 +414,17 @@ func runAISetup(args []string) error {
 		}
 	}
 
-	return localai.Setup(opts)
+	if err := localai.Setup(opts); err != nil {
+		return err
+	}
+
+	// Refresh Continue.dev config with current settings.
+	if saved, err := localai.LoadSavedAIConfig(); err == nil && saved != nil {
+		if writeErr := localai.WriteContinueConfig(saved); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not update Continue.dev config: %v\n", writeErr)
+		}
+	}
+	return nil
 }
 
 func runAIStatus(args []string) error {
@@ -426,6 +495,210 @@ func runAIReset() error {
 	return nil
 }
 
+// ── Chat ─────────────────────────────────────────────────────────────────────────────────────
+
+// runAIChat sends a one-off question to the configured AI backend and streams the response.
+func runAIChat(args []string) error {
+	question := strings.Join(args, " ")
+	if question == "" {
+		reader := bufio.NewReader(os.Stdin)
+		var err error
+		question, err = promptString(reader, "Ask anything", "")
+		if err != nil || question == "" {
+			return nil
+		}
+	}
+
+	cfg, err := localai.LoadSavedAIConfig()
+	if err != nil {
+		return fmt.Errorf("reading AI config: %w", err)
+	}
+	if cfg == nil {
+		return fmt.Errorf("no AI configured — run  devx ai  to set things up")
+	}
+
+	switch cfg.Provider {
+	case "local", "remote":
+		return chatViaOpenAIAPI(cfg, question)
+	case "anthropic":
+		// Delegate to claude CLI non-interactively.
+		return runExternalCommand("claude", "-p", question)
+	case "openai":
+		return runExternalCommand("codex", "ask", question)
+	case "copilot":
+		return runExternalCommand("gh", "copilot", "explain", question)
+	default:
+		return fmt.Errorf("chat not supported for provider %q", cfg.Provider)
+	}
+}
+
+func chatViaOpenAIAPI(cfg *localai.SavedAIConfig, question string) error {
+	status, err := localai.DetectWithEndpoint(cfg.Backend, cfg.Endpoint)
+	if err != nil || status == nil {
+		return fmt.Errorf("AI backend not running — start with: devx ai setup")
+	}
+
+	model := cfg.Model
+	if model == "" {
+		model = status.Model
+	}
+
+	payload := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": question},
+		},
+		"stream": false,
+	}
+
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", status.APIURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer local")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decoding response: %w", err)
+	}
+	if result.Error != nil {
+		return fmt.Errorf("API error: %s", result.Error.Message)
+	}
+	if len(result.Choices) == 0 {
+		return fmt.Errorf("empty response from model")
+	}
+
+	fmt.Println(result.Choices[0].Message.Content)
+	return nil
+}
+
+// ── Model management ────────────────────────────────────────────────────────────────────────────
+
+func runAIModel(args []string) error {
+	if len(args) == 0 {
+		fmt.Println("Usage:")
+		fmt.Println("  devx ai model list")
+		fmt.Println("  devx ai model pull <name>")
+		fmt.Println("  devx ai model remove <name>")
+		return nil
+	}
+	sub := args[0]
+	rest := args[1:]
+
+	cfg, _ := localai.LoadSavedAIConfig()
+	backend := localai.BackendOllama
+	if cfg != nil {
+		backend = localai.ResolveBackend(cfg.Backend)
+	}
+
+	switch sub {
+	case "list", "ls":
+		return runAIModelList(backend, cfg)
+	case "pull":
+		if len(rest) == 0 {
+			return fmt.Errorf("usage: devx ai model pull <name>")
+		}
+		return runAIModelPull(backend, rest[0])
+	case "remove", "rm", "delete":
+		if len(rest) == 0 {
+			return fmt.Errorf("usage: devx ai model remove <name>")
+		}
+		return runAIModelRemove(backend, rest[0])
+	default:
+		return fmt.Errorf("unknown model subcommand: %s", sub)
+	}
+}
+
+func runAIModelList(backend string, cfg *localai.SavedAIConfig) error {
+	endpoint := ""
+	if cfg != nil {
+		endpoint = cfg.Endpoint
+	}
+	status, err := localai.DetectWithEndpoint(backend, endpoint)
+	if err != nil {
+		return err
+	}
+	if status == nil {
+		return fmt.Errorf("no AI backend running — start it with: devx ai setup")
+	}
+
+	switch status.Backend {
+	case localai.BackendOllama, localai.BackendRemote:
+		fmt.Printf("Models on %s (%s):\n\n", status.URL, status.Backend)
+		return runExternalCommand("ollama", "list")
+	case localai.BackendMLX:
+		fmt.Printf("Models loaded on MLX (%s):\n\n", status.URL)
+		// MLX serves one model at a time — show it via the API.
+		if status.Model != "" {
+			fmt.Printf("  %s  (currently loaded)\n", status.Model)
+		} else {
+			fmt.Println("  (no model info available from API)")
+		}
+		fmt.Println()
+		fmt.Println("Manage MLX models with:")
+		fmt.Println("  python -m mlx_lm.convert --hf-path <hf-model-id>")
+	}
+	return nil
+}
+
+func runAIModelPull(backend, name string) error {
+	switch backend {
+	case localai.BackendOllama:
+		fmt.Printf("Pulling %s via Ollama...\n", name)
+		return runExternalCommand("ollama", "pull", name)
+	case localai.BackendMLX:
+		fmt.Printf("Pulling %s for MLX...\n", name)
+		fmt.Println("MLX does not have a built-in pull command.")
+		fmt.Println("Download and convert with:")
+		fmt.Printf("  python -m mlx_lm.convert --hf-path %s --mlx-path ~/.cache/mlx/%s\n", name, name)
+		return nil
+	default:
+		fmt.Printf("For remote backends, use your server's management tools to pull %s.\n", name)
+		return nil
+	}
+}
+
+func runAIModelRemove(backend, name string) error {
+	switch backend {
+	case localai.BackendOllama:
+		fmt.Printf("Removing %s from Ollama...\n", name)
+		return runExternalCommand("ollama", "rm", name)
+	case localai.BackendMLX:
+		fmt.Printf("To remove an MLX model, delete its directory:\n")
+		fmt.Printf("  rm -rf ~/.cache/mlx/%s\n", name)
+		return nil
+	default:
+		fmt.Printf("For remote backends, manage models on the server directly.\n")
+		return nil
+	}
+}
+
+func runExternalCommand(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // ── Prompt helpers ────────────────────────────────────────────────────────────────────────────
 
 func promptChoice(reader *bufio.Reader, label string, options []string, defaultIdx int) (int, error) {
@@ -485,11 +758,15 @@ func printAIUsage() {
 	fmt.Println("devx ai - set up and manage AI for your dev environment")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  devx ai                    first-time wizard, or launch configured tool")
-	fmt.Println("  devx ai status             show current AI configuration and backend state")
-	fmt.Println("  devx ai reset              clear saved config and re-run wizard next time")
-	fmt.Println("  devx ai setup              (re)start the local inference backend")
-	fmt.Println("    --backend mlx|ollama     force a specific backend")
-	fmt.Println("    --model <name>           override main model")
+	fmt.Println("  devx ai                      first-time wizard, or launch configured tool")
+	fmt.Println("  devx ai chat [question]      one-off question to the configured AI")
+	fmt.Println("  devx ai status               show current AI configuration and backend state")
+	fmt.Println("  devx ai reset                clear saved config and re-run wizard next time")
+	fmt.Println("  devx ai setup                (re)start the local inference backend")
+	fmt.Println("    --backend mlx|ollama        force a specific backend")
+	fmt.Println("    --model <name>              override main model")
 	fmt.Println("    --autocomplete-model <name>")
+	fmt.Println("  devx ai model list            list available models")
+	fmt.Println("  devx ai model pull <name>     pull a model (Ollama)")
+	fmt.Println("  devx ai model remove <name>   remove a model (Ollama)")
 }

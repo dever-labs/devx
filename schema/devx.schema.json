@@ -1,0 +1,262 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/dever-labs/devx/main/schema/devx.schema.json",
+  "title": "devx.yaml",
+  "description": "Schema for the devx project manifest (devx.yaml).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Manifest format version. Must be 1.",
+      "const": 1
+    },
+
+    "project": {
+      "type": "object",
+      "description": "Project metadata.",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Project name shown in devx status and logs."
+        },
+        "defaultProfile": {
+          "type": "string",
+          "description": "Profile to activate when none is specified with --profile."
+        }
+      }
+    },
+
+    "registry": {
+      "type": "object",
+      "description": "Container registry settings.",
+      "additionalProperties": false,
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "description": "Registry host prefix for image tags (e.g. 'ghcr.io/my-org')."
+        }
+      }
+    },
+
+    "ai": {
+      "type": "object",
+      "description": "AI provider settings used by 'devx ai' and automatic connection detection.",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "AI provider.",
+          "enum": ["local", "remote", "anthropic", "openai", "copilot", "azure-openai"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Default model name (e.g. 'deepseek-r1:70b', 'claude-3-5-sonnet-latest')."
+        },
+        "baseURL": {
+          "type": "string",
+          "description": "Override the provider's API endpoint."
+        },
+        "local": {
+          "type": "object",
+          "description": "Local inference backend settings.",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "type": "string",
+              "description": "Inference engine: 'mlx' (Apple Silicon), 'ollama' (all platforms), 'auto' (detect).",
+              "enum": ["mlx", "ollama", "remote", "auto"],
+              "default": "auto"
+            },
+            "endpoint": {
+              "type": "string",
+              "description": "Base URL for a remote inference server (when backend is 'remote')."
+            },
+            "model": {
+              "type": "string",
+              "description": "Override the main chat model for local inference."
+            },
+            "autocompleteModel": {
+              "type": "string",
+              "description": "Fast model for inline tab completion (Continue.dev)."
+            }
+          }
+        }
+      }
+    },
+
+    "tools": {
+      "type": "array",
+      "description": "Required SDKs, runtimes, and CLI tools. Checked by 'devx doctor', installed by 'devx setup --fix'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "description": "Tool name (e.g. 'dotnet', 'node', 'docker')." },
+          "version": { "type": "string", "description": "Required version (e.g. '8', '20.x')." },
+          "install": { "type": "string", "description": "Install hint or command shown when missing." }
+        }
+      }
+    },
+
+    "setup": {
+      "type": "array",
+      "description": "Ordered host-side commands run by 'devx setup'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run"],
+        "properties": {
+          "name": { "type": "string", "description": "Label shown during setup." },
+          "run": { "type": "string", "description": "Shell command to execute." },
+          "runOnce": { "type": "boolean", "description": "Skip if this step was run before and its inputs have not changed." }
+        }
+      }
+    },
+
+    "scripts": {
+      "type": "array",
+      "description": "Named scripts runnable with 'devx run <name>'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "run"],
+        "properties": {
+          "name": { "type": "string", "description": "Script name (used with 'devx run <name>')." },
+          "run": { "type": "string", "description": "Shell command to execute." },
+          "desc": { "type": "string", "description": "Short description shown by 'devx run'." },
+          "workdir": { "type": "string", "description": "Working directory override." },
+          "container": {
+            "type": "string",
+            "description": "Where to run the script when a devcontainer is present.",
+            "enum": ["auto", "true", "false"],
+            "default": "auto"
+          }
+        }
+      }
+    },
+
+    "profiles": {
+      "type": "object",
+      "description": "Named runtime profiles (local, ci, k8s, …).",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "runtime": {
+            "type": "string",
+            "enum": ["compose", "k8s"],
+            "description": "Runtime to use for this profile."
+          },
+          "services": {
+            "type": "object",
+            "description": "Application services (built from source).",
+            "additionalProperties": {
+              "$ref": "#/definitions/service"
+            }
+          },
+          "deps": {
+            "type": "object",
+            "description": "Third-party dependencies (databases, caches, …).",
+            "additionalProperties": {
+              "$ref": "#/definitions/dep"
+            }
+          },
+          "hooks": {
+            "$ref": "#/definitions/hooks"
+          }
+        }
+      }
+    }
+  },
+
+  "definitions": {
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "type": "string" },
+        "build": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "context": { "type": "string" },
+            "dockerfile": { "type": "string" }
+          }
+        },
+        "ports": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "workdir": { "type": "string" },
+        "mount": { "type": "array", "items": { "type": "string" } },
+        "dependsOn": { "type": "array", "items": { "type": "string" } },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "httpGet": { "type": "string" },
+            "interval": { "type": "string" },
+            "retries": { "type": "integer" }
+          }
+        }
+      }
+    },
+
+    "dep": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "description": "Provider kind (e.g. 'postgres', 'redis')." },
+        "source": { "type": "string" },
+        "version": { "type": "string" },
+        "image": { "type": "string" },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "ports": { "type": "array", "items": { "type": "string" } },
+        "volume": { "type": "string" },
+        "connect": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["service"],
+            "properties": {
+              "service": { "type": "string" },
+              "env": { "type": "object", "additionalProperties": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "afterUp": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/hook" }
+        },
+        "beforeDown": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/hook" }
+        }
+      }
+    },
+
+    "hook": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exec": { "type": "string" },
+        "service": { "type": "string" },
+        "run": { "type": "string" },
+        "background": { "type": "boolean" },
+        "name": { "type": "string" }
+      }
+    }
+  }
+}

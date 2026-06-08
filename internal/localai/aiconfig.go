@@ -14,14 +14,16 @@ const AIConfigPath = ".devx/ai.yaml"
 // SavedAIConfig is persisted to .devx/ai.yaml after first-time setup.
 // It drives both  devx ai  (launch) and  devx ai status  (info).
 type SavedAIConfig struct {
-	// Provider: local | anthropic | openai | copilot
+	// Provider: local | remote | anthropic | openai | copilot
 	Provider string `yaml:"provider"`
 	// Tool to launch when running  devx ai: aider | claude-code | codex | gh-copilot
 	Tool string `yaml:"tool"`
 	// Model is the main chat/reasoning model
 	Model string `yaml:"model,omitempty"`
-	// Backend: mlx | ollama — only meaningful when Provider == "local"
+	// Backend: mlx | ollama | remote — only meaningful when Provider == "local" or "remote"
 	Backend string `yaml:"backend,omitempty"`
+	// Endpoint is the base URL for a remote inference server (e.g. http://ai.internal:11434)
+	Endpoint string `yaml:"endpoint,omitempty"`
 	// AutocompleteModel for tab completion in Continue.dev
 	AutocompleteModel string `yaml:"autocompleteModel,omitempty"`
 }
@@ -103,16 +105,20 @@ func ToolsForProvider(provider string) []ToolOption {
 // LaunchTool starts the configured AI coding tool, blocking until it exits.
 // If the local backend is configured but not running, it returns an error.
 func LaunchTool(cfg *SavedAIConfig) error {
-	// For local backends, verify the backend is up before launching.
-	if cfg.Provider == "local" {
-		backend, err := Detect(cfg.Backend)
+	// For local/remote backends, verify the backend is up before launching.
+	if cfg.Provider == "local" || cfg.Provider == "remote" {
+		backend, err := DetectWithEndpoint(cfg.Backend, cfg.Endpoint)
 		if err != nil {
 			return fmt.Errorf("backend detection failed: %w", err)
 		}
 		if backend == nil {
+			hint := "devx ai setup"
+			if cfg.Provider == "remote" {
+				hint = fmt.Sprintf("check that %s is reachable", cfg.Endpoint)
+			}
 			return fmt.Errorf(
-				"local AI backend (%s) is not running — start it first with: devx ai setup",
-				cfg.Backend,
+				"AI backend (%s) is not running — %s",
+				cfg.Backend, hint,
 			)
 		}
 	}
@@ -133,12 +139,18 @@ func buildToolCmd(cfg *SavedAIConfig) (*exec.Cmd, error) {
 	switch cfg.Tool {
 	case "aider":
 		args := aiderArgs(cfg)
-		if cfg.Provider == "local" {
-			if cfg.Backend == BackendMLX {
-				env = setenv(env, "OPENAI_API_BASE", "http://localhost:8080/v1")
+		if cfg.Provider == "local" || cfg.Provider == "remote" {
+			endpoint := cfg.Endpoint
+			if endpoint == "" && cfg.Backend == BackendMLX {
+				endpoint = "http://localhost:8080/v1"
+			} else if endpoint == "" {
+				endpoint = "http://localhost:11434"
+			}
+			if cfg.Backend == BackendMLX || cfg.Provider == "remote" {
+				env = setenv(env, "OPENAI_API_BASE", endpoint)
 				env = setenv(env, "OPENAI_API_KEY", "local")
 			} else {
-				env = setenv(env, "OLLAMA_API_BASE", "http://localhost:11434")
+				env = setenv(env, "OLLAMA_API_BASE", endpoint)
 			}
 		}
 		cmd := exec.Command("aider", args...)

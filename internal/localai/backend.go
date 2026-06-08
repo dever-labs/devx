@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,7 @@ const (
 	BackendMLX    = "mlx"
 	BackendOllama = "ollama"
 	BackendAuto   = "auto"
+	BackendRemote = "remote"
 )
 
 // Status describes a running local AI backend.
@@ -27,11 +29,23 @@ type Status struct {
 }
 
 // Detect probes for a running local AI backend.
-// Order: MLX (port 8080) → Ollama (port 11434).
+// Order: MLX (port 8080) → Ollama (port 11434) → Remote endpoint (if provided).
 // If preferredBackend is "mlx" or "ollama", only that backend is tried first.
 func Detect(preferredBackend string) (*Status, error) {
+	return DetectWithEndpoint(preferredBackend, "")
+}
+
+// DetectWithEndpoint is like Detect but also probes a remote endpoint when
+// preferredBackend is "remote".
+func DetectWithEndpoint(preferredBackend, endpoint string) (*Status, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
 
+	if preferredBackend == BackendRemote {
+		if s := probeRemote(client, endpoint); s != nil {
+			return s, nil
+		}
+		return nil, nil
+	}
 	if preferredBackend != BackendOllama {
 		if s := probeMLX(client); s != nil {
 			return s, nil
@@ -78,6 +92,31 @@ func probeOllama(client *http.Client) *Status {
 		Model:    "",
 		Provider: "ollama",
 	}
+}
+
+func probeRemote(client *http.Client, endpoint string) *Status {
+	if endpoint == "" {
+		return nil
+	}
+	base := strings.TrimRight(endpoint, "/")
+	// Try OpenAI-compatible /v1/models first, then Ollama /api/tags.
+	if checkURL(client, base+"/v1/models") {
+		return &Status{
+			Backend:  BackendRemote,
+			URL:      base,
+			APIURL:   base + "/v1",
+			Provider: "openai",
+		}
+	}
+	if checkURL(client, base+"/api/tags") {
+		return &Status{
+			Backend:  BackendRemote,
+			URL:      base,
+			APIURL:   base + "/v1",
+			Provider: "ollama",
+		}
+	}
+	return nil
 }
 
 func checkURL(client *http.Client, url string) bool {
