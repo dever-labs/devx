@@ -13,7 +13,7 @@ We support only the latest released version of devx. Please upgrade before repor
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Please report security issues by emailing **security@dever-labs.io** (or open a [GitHub private security advisory](https://github.com/dever-labs/dever/security/advisories/new)).
+Please report security issues by emailing **security@dever.dk** (or open a [GitHub private security advisory](https://github.com/dever-labs/dever/security/advisories/new)).
 
 Include:
 - A description of the vulnerability
