@@ -88,3 +88,32 @@ volumes:
 		t.Fatalf("compose output mismatch\nGot: %#v\nWant: %#v", got, want)
 	}
 }
+
+func TestRenderSkipsProcessServices(t *testing.T) {
+	manifest := &config.Manifest{Version: 1, Project: config.Project{Name: "app", DefaultProfile: "local"}}
+	profile := &config.Profile{
+		Services: map[string]config.Service{
+			"web": {Kind: config.KindProcess, Run: "yarn dev", Ports: []string{"3000"}},
+			"api": {Image: "nginx", DependsOn: []string{"web", "db"}},
+		},
+		Deps: map[string]config.Dep{"db": {Image: "postgres:16"}},
+	}
+	out, err := Render(manifest, "local", profile, RewriteOptions{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f File
+	if err := yaml.Unmarshal([]byte(out), &f); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.Services["web"]; ok {
+		t.Fatal("process service must not be rendered into compose")
+	}
+	api := f.Services["api"]
+	if !reflect.DeepEqual(api.DependsOn, []string{"db"}) {
+		t.Fatalf("depends_on should drop process services, got %v", api.DependsOn)
+	}
+	if !reflect.DeepEqual(api.ExtraHosts, []string{"host.docker.internal:host-gateway"}) {
+		t.Fatalf("expected host.docker.internal mapping, got %v", api.ExtraHosts)
+	}
+}

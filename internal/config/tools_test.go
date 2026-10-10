@@ -65,7 +65,7 @@ profiles:
       api:
         image: nginx:alpine
 tools:
-  - name: node
+  - name: my-custom-tool
     version: "20"
 `)
 	m, err := Parse(data)
@@ -194,5 +194,12 @@ profiles:
 	}
 	if err := ValidateSetup(m); err != nil {
 		t.Fatalf("expected no error for empty setup: %v", err)
+	}
+}
+
+func TestValidateTools_WellKnownToolNeedsNoCheck(t *testing.T) {
+	m := &Manifest{Tools: []Tool{{Name: "node"}}}
+	if err := ValidateTools(m); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

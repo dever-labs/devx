@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"github.com/dever-labs/devx/internal/detect"
 	"sort"
 	"strings"
+	"time"
 )
 
 type ValidationError struct {
@@ -64,14 +66,7 @@ func ValidateProfile(m *Manifest, profile string) error {
 		issues = append(issues, fmt.Sprintf("profile '%s' runtime must be compose or k8s", profile))
 	}
 	for name, svc := range prof.Services {
-		if svc.Image == "" && svc.Build == nil {
-			issues = append(issues, fmt.Sprintf("service '%s' must define image or build", name))
-		}
-		for _, dep := range svc.DependsOn {
-			if !existsServiceOrDep(prof, dep) {
-				issues = append(issues, fmt.Sprintf("service '%s' dependsOn '%s' which does not exist", name, dep))
-			}
-		}
+		issues = append(issues, validateServiceKind(profile, prof, name, svc)...)
 	}
 
 	for name, dep := range prof.Deps {
@@ -140,7 +135,10 @@ func ValidateTools(m *Manifest) error {
 		if t.Name == "" {
 			issues = append(issues, fmt.Sprintf("tools[%d]: name is required", i))
 		}
-		if t.Check == "" {
+		if t.Installer != "" && t.Installer != "auto" && t.Installer != "system" {
+			issues = append(issues, fmt.Sprintf("tool '%s': installer must be auto or system", t.Name))
+		}
+		if t.Check == "" && detect.DefaultCheck(t.Name) == "" {
 			label := t.Name
 			if label == "" {
 				label = fmt.Sprintf("[%d]", i)
@@ -162,11 +160,107 @@ func ValidateSetup(m *Manifest) error {
 		if s.Name == "" {
 			issues = append(issues, fmt.Sprintf("setup[%d]: name is required", i))
 		}
-		if s.Run == "" {
+		if s.Run == "" && s.Workspace == "" {
 			issues = append(issues, fmt.Sprintf("setup step '%s': run is required", s.Name))
+		}
+		if s.Workspace != "" && s.Workspace != "auto" {
+			issues = append(issues, fmt.Sprintf("setup step '%s': workspace must be auto", s.Name))
+		}
+		if s.Workspace != "" && s.Run != "" {
+			issues = append(issues, fmt.Sprintf("setup step '%s': cannot set both run and workspace", s.Name))
 		}
 		if !validPlatforms[s.Platform] {
 			issues = append(issues, fmt.Sprintf("setup step '%s': platform must be all, windows, linux, or macos", s.Name))
+		}
+	}
+	if len(issues) > 0 {
+		return &ValidationError{Issues: issues}
+	}
+	return nil
+}
+
+func validateServiceKind(profileName string, prof Profile, name string, svc Service) []string {
+	var issues []string
+	switch svc.Kind {
+	case "", KindContainer:
+		if svc.Image == "" && svc.Build == nil {
+			issues = append(issues, fmt.Sprintf("service '%s' must define image or build", name))
+		}
+		if svc.Run != "" {
+			issues = append(issues, fmt.Sprintf("service '%s' run is only supported for kind: process", name))
+		}
+	case KindProcess:
+		if svc.Image != "" || svc.Build != nil {
+			issues = append(issues, fmt.Sprintf("service '%s' kind process cannot define image or build", name))
+		}
+		if len(svc.Command) == 0 && svc.Run == "" {
+			issues = append(issues, fmt.Sprintf("service '%s' kind process must define command or run", name))
+		}
+		if len(svc.Command) > 0 && svc.Run != "" {
+			issues = append(issues, fmt.Sprintf("service '%s' cannot set both command and run", name))
+		}
+		if len(svc.Mount) > 0 {
+			issues = append(issues, fmt.Sprintf("service '%s' mount is not supported for kind process", name))
+		}
+		if prof.Runtime == "k8s" {
+			issues = append(issues, fmt.Sprintf("profile '%s' uses runtime k8s, which does not support process service '%s'", profileName, name))
+		}
+	default:
+		issues = append(issues, fmt.Sprintf("service '%s' kind must be container or process", name))
+	}
+
+	for _, dep := range svc.DependsOn {
+		if !existsServiceOrDep(prof, dep) {
+			issues = append(issues, fmt.Sprintf("service '%s' dependsOn '%s' which does not exist", name, dep))
+		}
+	}
+
+	if r := svc.Ready; r != nil {
+		if r.HTTP == "" && r.TCP == "" {
+			issues = append(issues, fmt.Sprintf("service '%s' ready must set http or tcp", name))
+		}
+		for field, v := range map[string]string{"interval": r.Interval, "timeout": r.Timeout} {
+			if v == "" {
+				continue
+			}
+			if d, err := time.ParseDuration(v); err != nil || d <= 0 {
+				issues = append(issues, fmt.Sprintf("service '%s' ready.%s must be a positive duration like 2s or 1m", name, field))
+			}
+		}
+	}
+	if svc.Debug != nil {
+		if svc.Debug.Port <= 0 || svc.Debug.Port > 65535 {
+			issues = append(issues, fmt.Sprintf("service '%s' debug.port must be 1-65535", name))
+		}
+		switch svc.Debug.Type {
+		case "", "node", "python", "go", "java":
+		default:
+			issues = append(issues, fmt.Sprintf("service '%s' debug.type must be node, python, go, or java", name))
+		}
+	}
+	return issues
+}
+
+// ValidateEnvFiles checks envFiles declarations.
+func ValidateEnvFiles(m *Manifest) error {
+	var issues []string
+	for i, f := range m.EnvFiles {
+		if f.File == "" {
+			issues = append(issues, fmt.Sprintf("envFiles[%d]: file is required", i))
+		}
+		if len(f.Values) == 0 {
+			issues = append(issues, fmt.Sprintf("envFiles[%d]: values is required", i))
+		}
+		for k, s := range f.Values {
+			switch s.From {
+			case "env", "prompt":
+			case "command":
+				if s.Run == "" {
+					issues = append(issues, fmt.Sprintf("envFiles[%d].values.%s: run is required for from: command", i, k))
+				}
+			default:
+				issues = append(issues, fmt.Sprintf("envFiles[%d].values.%s: from must be env, command, or prompt", i, k))
+			}
 		}
 	}
 	if len(issues) > 0 {

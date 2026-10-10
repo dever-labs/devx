@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+
+	"github.com/dever-labs/devx/internal/process"
 )
 
 func runExec(ctx context.Context, args []string) error {
@@ -33,6 +35,18 @@ func runExec(ctx context.Context, args []string) error {
 
 	if profileRuntime(prof) == "k8s" {
 		return errors.New("exec for k8s runtime is not supported yet")
+	}
+
+	if svc, ok := prof.Services[service]; ok && svc.IsProcess() {
+		resolved := resolveProfile(manifest, prof)
+		code, err := process.Exec(ctx, processSpec(service, resolved.Services[service]), cmdArgs)
+		if err != nil {
+			return err
+		}
+		if code != 0 {
+			return fmt.Errorf("exec exited with code %d", code)
+		}
+		return nil
 	}
 
 	rt, err := selectRuntime(ctx)

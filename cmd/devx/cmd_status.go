@@ -12,10 +12,22 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dever-labs/devx/internal/config"
 	"github.com/dever-labs/devx/internal/localai"
-	"github.com/dever-labs/devx/internal/runtime"
 	"github.com/dever-labs/devx/internal/ui"
 )
+
+// statusRow is one line of `devx status`, covering containers and processes.
+type statusRow struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	State     string `json:"state"`
+	Health    string `json:"health"`
+	Ports     string `json:"ports"`
+	PID       int    `json:"pid,omitempty"`
+	DebugPort int    `json:"debugPort,omitempty"`
+	LogFile   string `json:"logFile,omitempty"`
+}
 
 func runStatus(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
@@ -39,40 +51,80 @@ func runStatus(ctx context.Context, args []string) error {
 		return errors.New("status for k8s runtime is not supported yet")
 	}
 
-	rt, err := selectRuntime(ctx)
-	if err != nil {
-		return err
-	}
+	var rows []statusRow
+	if prof.HasContainers() {
+		rt, err := selectRuntime(ctx)
+		if err != nil {
+			return err
+		}
 
-	enableTelemetry := telemetryFromState()
-	composePath := filepath.Join(devxDir, composeFile)
-	if err := ensureDevxDir(); err != nil {
-		return err
-	}
-	if err := writeCompose(composePath, manifest, profName, prof, nil, enableTelemetry); err != nil {
-		return err
-	}
+		enableTelemetry := telemetryFromState()
+		composePath := filepath.Join(devxDir, composeFile)
+		if err := ensureDevxDir(); err != nil {
+			return err
+		}
+		if err := writeCompose(composePath, manifest, profName, prof, nil, enableTelemetry); err != nil {
+			return err
+		}
 
-	statuses, err := rt.Status(ctx, composePath, manifest.Project.Name)
-	if err != nil {
-		return err
+		statuses, err := rt.Status(ctx, composePath, manifest.Project.Name)
+		if err != nil {
+			return err
+		}
+		for _, st := range statuses {
+			row := statusRow{Name: st.Name, Kind: config.KindContainer, State: st.State, Health: st.Health, Ports: st.Ports}
+			if svc, ok := prof.Services[st.Name]; ok && svc.Debug != nil {
+				row.DebugPort = svc.Debug.Port
+			}
+			rows = append(rows, row)
+		}
 	}
+	rows = append(rows, processRows(ctx, prof)...)
 
-	sort.Slice(statuses, func(i, j int) bool {
-		return statuses[i].Name < statuses[j].Name
-	})
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 
 	if *outputJSON {
-		return printStatusJSON(statuses)
+		return printStatusJSON(rows)
 	}
 
-	headers := []string{"Service", "State", "Health", "Ports"}
-	rows := make([][]string, 0, len(statuses))
-	for _, st := range statuses {
-		rows = append(rows, []string{st.Name, st.State, st.Health, st.Ports})
+	headers := []string{"Service", "Kind", "State", "Health", "Ports"}
+	table := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		table = append(table, []string{r.Name, r.Kind, r.State, r.Health, r.Ports})
 	}
-	ui.PrintTable(os.Stdout, headers, rows)
+	ui.PrintTable(os.Stdout, headers, table)
 	return nil
+}
+
+// processRows reports the state of every process service in the profile.
+func processRows(ctx context.Context, prof *config.Profile) []statusRow {
+	sup := supervisor()
+	var rows []statusRow
+	for _, name := range sortedServiceNames(prof) {
+		svc := prof.Services[name]
+		if !svc.IsProcess() {
+			continue
+		}
+		row := statusRow{Name: name, Kind: config.KindProcess, State: "stopped", Ports: strings.Join(svc.Ports, ",")}
+		if svc.Debug != nil {
+			row.DebugPort = svc.Debug.Port
+		}
+		if rec, ok, running := sup.Get(name); ok {
+			row.PID, row.LogFile = rec.PID, rec.LogFile
+			row.State = "exited"
+			if running {
+				row.State = "running"
+				if p := probeFor(name, svc); !p.Empty() {
+					row.Health = "unhealthy"
+					if p.Check(ctx) {
+						row.Health = "healthy"
+					}
+				}
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // printProjectHeader shows project name, devcontainer status, and AI backend.
@@ -146,18 +198,11 @@ func aiStatusLine() string {
 	return line
 }
 
-func printStatusJSON(statuses []runtime.ServiceStatus) error {
-	type jsonStatus struct {
-		Name   string `json:"name"`
-		State  string `json:"state"`
-		Health string `json:"health"`
-		Ports  string `json:"ports"`
+func printStatusJSON(rows []statusRow) error {
+	if rows == nil {
+		rows = []statusRow{}
 	}
-	out := make([]jsonStatus, len(statuses))
-	for i, s := range statuses {
-		out[i] = jsonStatus{Name: s.Name, State: s.State, Health: s.Health, Ports: s.Ports}
-	}
-	data, err := json.MarshalIndent(out, "", "  ")
+	data, err := json.MarshalIndent(rows, "", "  ")
 	if err != nil {
 		return err
 	}

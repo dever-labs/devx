@@ -98,6 +98,7 @@ func runInit(args []string) error {
 func writeInitManifest(projectName, stack string, withAI bool) error {
 	var sb strings.Builder
 
+	sb.WriteString("# yaml-language-server: $schema=https://raw.githubusercontent.com/dever-labs/devx/main/schemas/devx.schema.json\n")
 	sb.WriteString("version: 1\n\nproject:\n")
 	sb.WriteString(fmt.Sprintf("  name: %s\n", projectName))
 	sb.WriteString("  defaultProfile: local\n")

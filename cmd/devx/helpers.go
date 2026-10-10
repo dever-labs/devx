@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -183,7 +182,7 @@ func readState() *state {
 func telemetryFromState() bool {
 	st := readState()
 	if st == nil {
-		return true
+		return false
 	}
 	return st.Telemetry
 }
@@ -204,67 +203,6 @@ func streamLogs(reader io.Reader, jsonOut bool) error {
 		fmt.Println(string(data))
 	}
 	return scanner.Err()
-}
-
-func waitForHealth(profile *config.Profile) error {
-	if profile == nil {
-		return nil
-	}
-
-	type check struct {
-		name string
-		url  string
-	}
-
-	var checks []check
-	for name, svc := range profile.Services {
-		if svc.Health == nil || svc.Health.HttpGet == "" {
-			continue
-		}
-		checks = append(checks, check{name: name, url: svc.Health.HttpGet})
-	}
-
-	if len(checks) == 0 {
-		return nil
-	}
-
-	deadline := time.Now().Add(2 * time.Minute)
-	pending := map[string]string{}
-	for _, c := range checks {
-		pending[c.name] = c.url
-	}
-
-	for len(pending) > 0 && time.Now().Before(deadline) {
-		for name, url := range pending {
-			if checkHTTP(url) {
-				delete(pending, name)
-			}
-		}
-		if len(pending) == 0 {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
-
-	if len(pending) > 0 {
-		var parts []string
-		for name, url := range pending {
-			parts = append(parts, fmt.Sprintf("%s (%s)", name, url))
-		}
-		return fmt.Errorf("health checks failed: %s", strings.Join(parts, ", "))
-	}
-
-	return nil
-}
-
-func checkHTTP(url string) bool {
-	client := http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
 func collectImages(manifest *config.Manifest, profileName string, prof *config.Profile) ([]string, error) {
@@ -684,16 +622,21 @@ func resolveConnections(manifest *config.Manifest, prof *config.Profile) *config
 				continue
 			}
 
+			vals := outputVals
+			if svc.IsProcess() {
+				vals = hostVals(outputVals, dep.Ports)
+			}
+
 			var injected map[string]string
 			if len(entry.Env) > 0 {
-				injected = renderEnvTemplates(entry.Env, outputVals)
+				injected = renderEnvTemplates(entry.Env, vals)
 			} else if aiClient != nil {
 				var serviceDir string
 				if svc.Build != nil {
 					serviceDir = svc.Build.Context
 				}
 				var err error
-				injected, err = devxai.Detect(context.Background(), aiClient, dep.Kind, outputVals, serviceDir)
+				injected, err = devxai.Detect(context.Background(), aiClient, dep.Kind, vals, serviceDir)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "warning: AI detection for dep %q → service %q failed: %v\n", depName, entry.Service, err)
 					continue

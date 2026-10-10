@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 )
 
-func runAuth(_ context.Context, _ []string) error {
-	fmt.Println("Auth status")
-	fmt.Println()
+func runAuth(_ context.Context, args []string) error {
+	fs := flag.NewFlagSet("auth", flag.ExitOnError)
+	outputJSON := fs.Bool("json", false, "Emit auth status as JSON")
+	_ = fs.Parse(args)
 
 	checks := []authCheck{
 		{"GitHub CLI", checkGitHubAuth},
@@ -22,16 +25,37 @@ func runAuth(_ context.Context, _ []string) error {
 
 	// Deduplicate: only show OpenAI once.
 	seen := map[string]bool{}
+	type result struct {
+		Name string `json:"name"`
+		OK   bool   `json:"ok"`
+		Hint string `json:"hint,omitempty"`
+	}
+	var results []result
 	for _, c := range checks {
 		if seen[c.Name] {
 			continue
 		}
 		seen[c.Name] = true
 		status, hint := c.check()
-		if hint != "" {
-			fmt.Printf("  %s  %-20s  %s\n", statusIcon(status), c.Name, hint)
+		results = append(results, result{Name: c.Name, OK: status, Hint: hint})
+	}
+
+	if *outputJSON {
+		data, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	fmt.Println("Auth status")
+	fmt.Println()
+	for _, r := range results {
+		if r.Hint != "" {
+			fmt.Printf("  %s  %-20s  %s\n", statusIcon(r.OK), r.Name, r.Hint)
 		} else {
-			fmt.Printf("  %s  %s\n", statusIcon(status), c.Name)
+			fmt.Printf("  %s  %s\n", statusIcon(r.OK), r.Name)
 		}
 	}
 

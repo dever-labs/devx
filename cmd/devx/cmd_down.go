@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/dever-labs/devx/internal/k8s"
+	devxruntime "github.com/dever-labs/devx/internal/runtime"
 )
 
 func runDown(ctx context.Context, args []string) error {
@@ -19,19 +20,25 @@ func runDown(ctx context.Context, args []string) error {
 		return err
 	}
 
-	rt, err := selectRuntime(ctx)
-	if err != nil {
-		return err
-	}
-
-	enableTelemetry := telemetryFromState()
-	runtimeMode := profileRuntime(prof)
-	if runtimeMode == "k8s" {
+	if profileRuntime(prof) == "k8s" {
+		if _, err := selectRuntime(ctx); err != nil {
+			return err
+		}
 		return runDownK8s(ctx)
 	}
 
+	var rt devxruntime.Runtime
+	if prof.HasContainers() {
+		rt, err = selectRuntime(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	enableTelemetry := telemetryFromState()
+
 	composePath := filepath.Join(devxDir, composeFile)
-	if !fileExists(composePath) {
+	if rt != nil && !fileExists(composePath) {
 		if err := ensureDevxDir(); err != nil {
 			return err
 		}
@@ -41,13 +48,24 @@ func runDown(ctx context.Context, args []string) error {
 	}
 
 	if len(prof.Hooks.BeforeDown) > 0 {
+		for _, h := range prof.Hooks.BeforeDown {
+			if h.Exec != "" && rt == nil {
+				return fmt.Errorf("beforeDown exec hook needs a container service, but profile %q has none; use a run hook", profName)
+			}
+		}
 		fmt.Println("Running beforeDown hooks...")
 		if _, err := runHooks(ctx, rt, composePath, manifest.Project.Name, prof.Hooks.BeforeDown); err != nil {
 			return err
 		}
 	}
 
-	return rt.Down(ctx, composePath, manifest.Project.Name, *volumes)
+	procErr := stopProcesses()
+	if rt != nil {
+		if err := rt.Down(ctx, composePath, manifest.Project.Name, *volumes); err != nil {
+			return err
+		}
+	}
+	return procErr
 }
 
 func runDownK8s(ctx context.Context) error {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"strings"
 	"testing"
 
 	"github.com/dever-labs/devx/internal/config"
@@ -483,3 +484,69 @@ func TestRunSteps_EmptyList(t *testing.T) {
 	}
 }
 
+func TestResolveTools(t *testing.T) {
+	d := t.TempDir()
+	if err := os.WriteFile(filepath.Join(d, ".nvmrc"), []byte("20.1.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := ResolveTools(d, []config.Tool{
+		{Name: "node"},
+		{Name: "node", Version: "18"},
+	})
+	if got[0].Version != "20.1.0" || got[0].Source != ".nvmrc" || got[0].Check != "node --version" {
+		t.Errorf("fill: %+v", got[0])
+	}
+	if got[1].Version != "18" || got[1].Conflict == "" {
+		t.Errorf("conflict: %+v", got[1])
+	}
+}
+
+func TestResolveSteps(t *testing.T) {
+	d := t.TempDir()
+	if got := ResolveSteps(d, nil); got != nil {
+		t.Fatalf("expected none, got %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(d, "package.json"), []byte(`{"workspaces":["a"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveSteps(d, nil); len(got) != 1 || got[0].Run != "npm install" {
+		t.Fatalf("auto: %+v", got)
+	}
+	got := ResolveSteps(d, []config.SetupStep{{Name: "i", Workspace: "auto"}})
+	if got[0].Run != "npm install" {
+		t.Fatalf("explicit: %+v", got)
+	}
+}
+
+func TestRunEnvFiles(t *testing.T) {
+	d := t.TempDir()
+	wd, _ := os.Getwd()
+	if err := os.Chdir(d); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	t.Setenv("DEVX_TEST_TOKEN", "s3cret")
+	if err := os.WriteFile("c.tmpl", []byte("token: ${TOKEN}\nkey: ${KEY}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := config.EnvFile{File: "c.yaml", Template: "c.tmpl", Values: map[string]config.EnvSource{
+		"TOKEN": {From: "env", Name: "DEVX_TEST_TOKEN"},
+		"KEY":   {From: "prompt", Default: "generate"},
+	}}
+	r := RunEnvFiles([]config.EnvFile{f}, EnvOptions{})[0]
+	if r.Status != "ok" || strings.Contains(r.Detail, "s3cret") {
+		t.Fatalf("%+v", r)
+	}
+	b, _ := os.ReadFile("c.yaml")
+	if !strings.Contains(string(b), "token: s3cret") || strings.Contains(string(b), "${") {
+		t.Fatalf("body: %s", b)
+	}
+	if r := RunEnvFiles([]config.EnvFile{f}, EnvOptions{})[0]; r.Status != "skipped" {
+		t.Fatalf("expected skipped, got %+v", r)
+	}
+
+	g := config.EnvFile{File: "d.env", Values: map[string]config.EnvSource{"NOPE": {From: "env", Name: "DEVX_TEST_UNSET"}}}
+	if r := RunEnvFiles([]config.EnvFile{g}, EnvOptions{})[0]; r.Status != "missing" || !strings.Contains(r.Detail, "NOPE") {
+		t.Fatalf("expected missing: %+v", r)
+	}
+}

@@ -53,9 +53,15 @@ func Run(ctx context.Context, opts Options) Report {
 		Detail: fmt.Sprintf("devx (dev) on %s/%s", goruntime.GOOS, goruntime.GOARCH),
 	})
 
+	unavailable := "FAIL"
+	if opts.Manifest != nil && !needsContainerRuntime(opts.Manifest) {
+		// Process-only manifests run without Docker/Podman.
+		unavailable = "WARN"
+	}
+
 	runtimeChecks := detectAllRuntimes(ctx)
 	for _, info := range runtimeChecks {
-		status := "FAIL"
+		status := unavailable
 		if info.Available {
 			status = "PASS"
 		}
@@ -142,7 +148,15 @@ func checkTools(ctx context.Context, m *config.Manifest, fix bool) []Check {
 		label := fmt.Sprintf("Tool: %s", r.Name)
 		switch r.Status {
 		case "ok", "installed":
-			checks = append(checks, Check{Name: label, Status: "PASS", Detail: r.Detail})
+			detail := r.Detail
+			if r.Source != "" {
+				detail += " (required by " + r.Source + ")"
+			}
+			if r.Warning != "" {
+				checks = append(checks, Check{Name: label, Status: "WARN", Detail: r.Warning})
+				continue
+			}
+			checks = append(checks, Check{Name: label, Status: "PASS", Detail: detail})
 		case "missing":
 			hint := r.Detail
 			if hint == "" {
@@ -322,3 +336,14 @@ func checkAI() []Check {
 	return checks
 }
 
+
+// needsContainerRuntime reports whether any profile runs containers on the
+// local runtime (k8s profiles use kubectl instead).
+func needsContainerRuntime(m *config.Manifest) bool {
+	for _, prof := range m.Profiles {
+		if prof.Runtime != "k8s" && prof.HasContainers() {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dever-labs/devx/main/schemas/devx.schema.json
+# A standalone repo: host processes plus one container dependency. Docker is only needed for `db`.
+version: 1
+project:
+  name: standalone-demo
+  defaultProfile: local
+
+tools:
+  - name: node        # version comes from .nvmrc / package.json engines
+  - name: yarn        # version comes from package.json packageManager
+
+setup:
+  - name: install
+    workspace: auto   # one root `yarn install` / `pnpm install` / `npm ci`
+
+envFiles:
+  - file: .env.local
+    values:
+      DATABASE_URL: { from: env, default: "postgres://app:app@localhost:5432/app" }
+      SESSION_SECRET: { from: prompt, secret: true, default: generate }
+
+profiles:
+  local:
+    services:
+      web:
+        kind: process
+        run: yarn dev
+        workdir: ./packages/web
+        ports: ["3000"]
+        env:
+          PORT: "3000"
+        dependsOn: [db]
+        ready:
+          http: http://localhost:3000/health
+          timeout: 2m
+        debug: { port: 9229, type: node }
+    deps:
+      db:
+        kind: postgres
+        version: "16"

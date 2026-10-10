@@ -66,7 +66,7 @@ func TestDevxUp_Basic(t *testing.T) {
 	dir := exampleDir("basic")
 
 	// Bring up the environment
-	up := exec.Command(bin, "up", "--profile", "ci", "--no-telemetry")
+	up := exec.Command(bin, "up", "--profile", "ci")
 	up.Dir = dir
 	up.Stdout = os.Stdout
 	up.Stderr = os.Stderr
@@ -100,7 +100,7 @@ func TestDevxRenderCompose_Basic(t *testing.T) {
 	bin := devxBin(t)
 	dir := exampleDir("basic")
 
-	out, err := exec.Command(bin, "render", "compose", "--no-telemetry").
+	out, err := exec.Command(bin, "render", "compose").
 		Output()
 	if err != nil {
 		t.Fatalf("devx render compose failed: %v", err)

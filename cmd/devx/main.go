@@ -54,6 +54,8 @@ func main() {
 		err = runSetup(ctx, args)
 	case "validate":
 		err = runValidate(args)
+	case "debug-config":
+		err = runDebugConfig(args)
 	case "render":
 		err = runRender(ctx, args)
 	case "lock":
@@ -104,16 +106,17 @@ func printUsage() {
 	fmt.Println("devx - cross-platform dev orchestrator")
 	fmt.Println("\nUsage:")
 	fmt.Println("  devx init                          interactive project scaffold (devx.yaml + devcontainer)")
-	fmt.Println("  devx setup [--fix] [--json]")
+	fmt.Println("  devx setup [--fix] [--json] [--non-interactive]")
 	fmt.Println("  devx run [script]                  run a script from devx.yaml")
 	fmt.Println("  devx clone <repo> [dir]            clone repo and run devx setup")
-	fmt.Println("  devx up [--profile local|ci|k8s] [--build] [--pull]")
+	fmt.Println("  devx up [--profile local|ci|k8s] [--build] [--pull] [--telemetry] [--attach <process>]")
 	fmt.Println("  devx down [--volumes]")
 	fmt.Println("  devx status [--json]               project + devcontainer + AI status")
 	fmt.Println("  devx logs [service] [--follow] [--since 10m] [--json]")
 	fmt.Println("  devx exec <service> -- <cmd...>")
 	fmt.Println("  devx doctor [--fix] [--json]       health-check all tools, backends, and config")
-	fmt.Println("  devx validate [--file path]")
+	fmt.Println("  devx validate [--file path] [--json]")
+	fmt.Println("  devx debug-config [--write]        VS Code attach configs for services with a debug block")
 	fmt.Println("  devx render compose|k8s [--write]")
 	fmt.Println("  devx lock update")
 	fmt.Println("  devx providers install|list")

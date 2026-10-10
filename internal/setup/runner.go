@@ -12,14 +12,17 @@ import (
 	"strings"
 
 	"github.com/dever-labs/devx/internal/config"
+	"github.com/dever-labs/devx/internal/detect"
 )
 
 // Result describes the outcome of a single tool check or setup step.
 type Result struct {
-	Name   string `json:"name"`
-	Type   string `json:"type"`   // "tool" | "step"
-	Status string `json:"status"` // "ok" | "installed" | "skipped" | "not-applicable" | "missing" | "failed"
-	Detail string `json:"detail,omitempty"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`   // "tool" | "step"
+	Status  string `json:"status"` // "ok" | "installed" | "skipped" | "not-applicable" | "missing" | "failed"
+	Detail  string `json:"detail,omitempty"`
+	Source  string `json:"source,omitempty"` // where a tool version requirement came from
+	Warning string `json:"warning,omitempty"`
 }
 
 // Options controls setup behaviour.
@@ -56,7 +59,10 @@ func CheckTool(tool config.Tool) (bool, string) {
 // Subprocess stdout is routed via opts.Stdout (defaults to os.Stdout).
 // Install progress lines are written to stderr so JSON stdout stays clean.
 func InstallTool(_ context.Context, tool config.Tool, opts Options) error {
-	installCmd := platformInstall(tool.Install)
+	installCmd := versionManagerInstall(tool)
+	if installCmd == "" {
+		installCmd = platformInstall(tool.Install)
+	}
 	if installCmd == "" {
 		return fmt.Errorf("no install command defined for platform %s", goruntime.GOOS)
 	}
@@ -65,59 +71,46 @@ func InstallTool(_ context.Context, tool config.Tool, opts Options) error {
 }
 
 // RunTools checks every declared tool and installs any that are missing when
-// opts.Fix is true. Results are returned in declaration order.
+// opts.Fix is true. Results are returned in declaration order. Missing
+// version/check fields are filled from repo files (see ResolveTools).
 // Progress messages are written to stderr so that --json stdout stays clean.
 func RunTools(ctx context.Context, tools []config.Tool, opts Options) []Result {
+	wd, _ := os.Getwd()
 	var results []Result
-	for _, tool := range tools {
-		ok, detail := CheckTool(tool)
-		if ok {
-			results = append(results, Result{
-				Name:   tool.Name,
-				Type:   "tool",
-				Status: "ok",
-				Detail: detail,
-			})
-			continue
+	for _, tool := range ResolveTools(wd, tools) {
+		r := runTool(ctx, tool, opts)
+		r.Source = tool.Source
+		switch {
+		case tool.Conflict != "":
+			r.Warning = tool.Conflict
+		case tool.Version != "" && (r.Status == "ok" || r.Status == "installed") && !detect.VersionMatches(tool.Version, r.Detail):
+			r.Warning = fmt.Sprintf("installed version does not match required %s (%s)", tool.Version, tool.Source)
 		}
-		if !opts.Fix {
-			results = append(results, Result{
-				Name:   tool.Name,
-				Type:   "tool",
-				Status: "missing",
-				Detail: detail,
-			})
-			continue
-		}
-		fmt.Fprintf(os.Stderr, "  Installing %s...\n", tool.Name)
-		if err := InstallTool(ctx, tool, opts); err != nil {
-			results = append(results, Result{
-				Name:   tool.Name,
-				Type:   "tool",
-				Status: "failed",
-				Detail: err.Error(),
-			})
-			continue
-		}
-		// Re-check after install to confirm success.
-		ok2, detail2 := CheckTool(tool)
-		if ok2 {
-			results = append(results, Result{
-				Name:   tool.Name,
-				Type:   "tool",
-				Status: "installed",
-				Detail: detail2,
-			})
-		} else {
-			results = append(results, Result{
-				Name:   tool.Name,
-				Type:   "tool",
-				Status: "failed",
-				Detail: "installed but check still fails: " + detail2,
-			})
-		}
+		results = append(results, r)
 	}
 	return results
+}
+
+func runTool(ctx context.Context, tool config.Tool, opts Options) Result {
+	res := func(status, detail string) Result {
+		return Result{Name: tool.Name, Type: "tool", Status: status, Detail: detail}
+	}
+	ok, detail := CheckTool(tool)
+	if ok {
+		return res("ok", detail)
+	}
+	if !opts.Fix {
+		return res("missing", detail)
+	}
+	fmt.Fprintf(os.Stderr, "  Installing %s...\n", tool.Name)
+	if err := InstallTool(ctx, tool, opts); err != nil {
+		return res("failed", err.Error())
+	}
+	if ok2, detail2 := CheckTool(tool); ok2 {
+		return res("installed", detail2)
+	} else {
+		return res("failed", "installed but check still fails: "+detail2)
+	}
 }
 
 // RunSteps executes setup steps in declaration order.

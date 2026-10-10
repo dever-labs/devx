@@ -19,7 +19,8 @@ func runRender(ctx context.Context, args []string) error {
 
 	fs := flag.NewFlagSet("render", flag.ExitOnError)
 	write := fs.Bool("write", false, "Write to .devx/compose.yaml")
-	noTelemetry := fs.Bool("no-telemetry", false, "Disable telemetry stack")
+	telemetry := fs.Bool("telemetry", false, "Include the built-in observability stack")
+	noTelemetry := fs.Bool("no-telemetry", false, "Deprecated: telemetry is off by default")
 	_ = fs.Parse(args[1:])
 
 	manifest, profName, prof, err := loadProfile("")
@@ -29,7 +30,7 @@ func runRender(ctx context.Context, args []string) error {
 
 	lockfile, _ := lock.Load(lockFile)
 
-	composed, err := buildCompose(manifest, profName, prof, lockfile, !*noTelemetry)
+	composed, err := buildCompose(manifest, profName, prof, lockfile, *telemetry && !*noTelemetry)
 	if err != nil {
 		return err
 	}
@@ -39,7 +40,7 @@ func runRender(ctx context.Context, args []string) error {
 			return err
 		}
 		composePath := filepath.Join(devxDir, composeFile)
-		return writeCompose(composePath, manifest, profName, prof, lockfile, !*noTelemetry)
+		return writeCompose(composePath, manifest, profName, prof, lockfile, *telemetry && !*noTelemetry)
 	}
 
 	fmt.Print(composed)

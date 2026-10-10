@@ -9,7 +9,7 @@ import (
 // allCommands is the canonical list used by completion scripts.
 var allCommands = []string{
 	"init", "setup", "up", "down", "status", "logs", "exec",
-	"doctor", "validate", "render", "lock", "providers", "export",
+	"doctor", "validate", "debug-config", "render", "lock", "providers", "export",
 	"run", "clone", "dev", "ai", "update", "completion", "version", "help",
 }
 

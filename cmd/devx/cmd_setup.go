@@ -12,8 +12,9 @@ import (
 
 func runSetup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
-	fix := fs.Bool("fix", false, "Re-run runOnce steps and install missing tools")
+	fix := fs.Bool("fix", false, "Re-run runOnce steps, install missing tools, regenerate env files")
 	outputJSON := fs.Bool("json", false, "Emit results as JSON")
+	nonInteractive := fs.Bool("non-interactive", false, "Never prompt; fail listing missing values")
 	_ = fs.Parse(args)
 
 	manifest, err := loadManifestOnly()
@@ -36,11 +37,20 @@ func runSetup(ctx context.Context, args []string) error {
 		allResults = append(allResults, results...)
 	}
 
-	if len(manifest.Setup) > 0 {
+	if len(manifest.EnvFiles) > 0 {
+		if !*outputJSON {
+			fmt.Println("Generating local config files...")
+		}
+		interactive := !*outputJSON && !*nonInteractive && os.Getenv("CI") == "" && stdinIsTerminal()
+		allResults = append(allResults, setup.RunEnvFiles(manifest.EnvFiles, setup.EnvOptions{Fix: *fix, Interactive: interactive})...)
+	}
+
+	wd, _ := os.Getwd()
+	if steps := setup.ResolveSteps(wd, manifest.Setup); len(steps) > 0 {
 		if !*outputJSON {
 			fmt.Println("Running setup steps...")
 		}
-		results := setup.RunSteps(manifest.Setup, opts)
+		results := setup.RunSteps(steps, opts)
 		allResults = append(allResults, results...)
 	}
 
@@ -50,6 +60,11 @@ func runSetup(ctx context.Context, args []string) error {
 			return err
 		}
 		fmt.Println(string(data))
+		for _, r := range allResults {
+			if r.Status == "failed" || r.Status == "missing" {
+				return fmt.Errorf("setup incomplete")
+			}
+		}
 		return nil
 	}
 
@@ -64,6 +79,12 @@ func runSetup(ctx context.Context, args []string) error {
 		line := fmt.Sprintf("  %s %-20s %s", icon, r.Name, r.Status)
 		if r.Detail != "" {
 			line += "  " + r.Detail
+		}
+		if r.Source != "" {
+			line += "  (from " + r.Source + ")"
+		}
+		if r.Warning != "" {
+			line += "\n      ! " + r.Warning
 		}
 		fmt.Println(line)
 		if r.Status == "failed" || r.Status == "missing" {
@@ -91,4 +112,9 @@ func setupStatusIcon(status string) string {
 	default:
 		return "?"
 	}
+}
+
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

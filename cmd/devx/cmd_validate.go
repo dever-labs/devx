@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -11,10 +12,17 @@ import (
 func runValidate(args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	file := fs.String("file", manifestFile, "Path to devx.yaml to validate")
+	outputJSON := fs.Bool("json", false, "Emit result as JSON")
 	_ = fs.Parse(args)
 
 	manifest, err := config.Load(*file)
 	if err != nil {
+		if *outputJSON {
+			if jsonErr := printValidateJSON(false, []string{fmt.Sprintf("parse error: %v", err)}); jsonErr != nil {
+				return jsonErr
+			}
+			return fmt.Errorf("validation failed")
+		}
 		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
 		return fmt.Errorf("validation failed")
 	}
@@ -57,6 +65,24 @@ func runValidate(args []string) error {
 		}
 	}
 
+	if err := config.ValidateEnvFiles(manifest); err != nil {
+		if ve, ok := err.(*config.ValidationError); ok {
+			issues = append(issues, ve.Issues...)
+		} else {
+			issues = append(issues, err.Error())
+		}
+	}
+
+	if *outputJSON {
+		if err := printValidateJSON(len(issues) == 0, issues); err != nil {
+			return err
+		}
+		if len(issues) > 0 {
+			return fmt.Errorf("validation failed")
+		}
+		return nil
+	}
+
 	if len(issues) > 0 {
 		fmt.Fprintf(os.Stderr, "devx.yaml has %d issue(s):\n", len(issues))
 		for _, issue := range issues {
@@ -66,5 +92,21 @@ func runValidate(args []string) error {
 	}
 
 	fmt.Println("devx.yaml is valid ✓")
+	return nil
+}
+
+func printValidateJSON(valid bool, issues []string) error {
+	out := struct {
+		Valid  bool     `json:"valid"`
+		Issues []string `json:"issues"`
+	}{Valid: valid, Issues: issues}
+	if out.Issues == nil {
+		out.Issues = []string{}
+	}
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
 	return nil
 }

@@ -34,6 +34,7 @@ type Service struct {
 	Healthcheck *Healthcheck      `yaml:"healthcheck,omitempty"`
 	Networks    []string          `yaml:"networks,omitempty"`
 	Privileged  bool              `yaml:"privileged,omitempty"`
+	ExtraHosts  []string          `yaml:"extra_hosts,omitempty"`
 }
 
 type Build struct {
@@ -120,6 +121,9 @@ func Render(manifest *config.Manifest, profileName string, profile *config.Profi
 
 	for _, name := range util.SortedKeys(profile.Services) {
 		svc := profile.Services[name]
+		if svc.IsProcess() {
+			continue
+		}
 		service := Service{
 			Image:       rewriteImage(svc.Image, rewrite),
 			Ports:       svc.Ports,
@@ -127,9 +131,12 @@ func Render(manifest *config.Manifest, profileName string, profile *config.Profi
 			Command:     svc.Command,
 			WorkingDir:  svc.Workdir,
 			Volumes:     svc.Mount,
-			DependsOn:   svc.DependsOn,
+			DependsOn:   containerDeps(profile, svc.DependsOn),
 			Labels:      labels(manifest, profileName, name),
 			Networks:    []string{"devx_default"},
+		}
+		if len(containerDeps(profile, svc.DependsOn)) != len(svc.DependsOn) {
+			service.ExtraHosts = []string{"host.docker.internal:host-gateway"}
 		}
 
 		if svc.Build != nil {
@@ -238,4 +245,17 @@ func Normalize(data string) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// containerDeps drops dependsOn entries that refer to host process services,
+// which are not part of the compose project.
+func containerDeps(profile *config.Profile, deps []string) []string {
+	var out []string
+	for _, d := range deps {
+		if s, ok := profile.Services[d]; ok && s.IsProcess() {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
