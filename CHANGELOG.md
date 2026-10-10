@@ -9,6 +9,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Added
+- Standalone repo support: `kind: process` services (host commands supervised by devx, mixable with containers), `ready` HTTP/TCP probes, `devx up --attach`, and `devx debug-config` for VS Code attach configs
+- `devx status`, `logs`, `exec` and `down` handle process services; `status --json` reports kind, state, pid and ports
+- Tool versions and checks are inferred from `.nvmrc`, `package.json`, `global.json`, `go.mod`, `.tool-versions`; `installer: system` opt-out; version-manager-aware installs (volta, fnm, nvm, corepack); `doctor` warns on mismatches
+- `setup`: `workspace: auto` single-root installs for JS monorepos, and `envFiles` for generating local config/secrets (env, command, prompt sources)
+- `--json` for `validate` and `auth`; `setup --non-interactive`
+- `AGENTS.md`, accurate `schemas/devx.schema.json`, and an `Install channels` workflow
+- `doctor` treats a missing container runtime as a warning for manifests with no containers
 - Lifecycle hooks (`afterUp`, `beforeDown`) — run migrations, scripts, or exec commands inside containers at environment start/stop
 - `devx version` command — prints the binary version set at build time
 - Multi-platform release workflow — GitHub Actions builds for Linux, macOS, Windows (amd64 + arm64) on `git tag v*`
@@ -18,6 +25,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Comprehensive `examples/basic/` with all profile types and stub service source
 
 ### Changed
+- Fixed repository references in installers and packaging (`dever-labs/dever` → `dever-labs/devx`)
+- **Breaking:** the built-in telemetry stack is now opt-in. Use `devx up --telemetry` / `devx render compose --telemetry`; `--no-telemetry` is accepted but is a no-op
 - CI updated to `actions/checkout@v4` and `actions/setup-go@v5` with `go-version-file`
 - Build scripts now inject version via `-ldflags -X main.version` and include `linux/arm64` + `windows/arm64` targets
 - Repository structure reorganised: `packaging/` consolidates all distribution artefacts, `examples/basic/src/` holds example app stubs
@@ -43,5 +52,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Lockfile support for pinning image digests
 - Plugin system
 
-[Unreleased]: https://github.com/dever-labs/dever/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/dever-labs/dever/releases/tag/v0.1.0
+[Unreleased]: https://github.com/dever-labs/devx/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/dever-labs/devx/releases/tag/v0.1.0

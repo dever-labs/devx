@@ -1,132 +1,572 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "devx manifest",
+  "$id": "https://raw.githubusercontent.com/dever-labs/devx/main/schemas/devx.schema.json",
+  "title": "devx.yaml",
+  "description": "Schema for the devx project manifest (devx.yaml). Mirrors internal/config/manifest.go and internal/config/tools.go — keep in sync when those change.",
   "type": "object",
-  "required": ["version", "project", "profiles"],
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "project",
+    "profiles"
+  ],
   "properties": {
     "version": {
       "type": "integer",
-      "enum": [1]
+      "description": "Manifest format version. Must be 1.",
+      "const": 1
     },
     "project": {
       "type": "object",
-      "required": ["name", "defaultProfile"],
+      "description": "Project metadata.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "defaultProfile"
+      ],
       "properties": {
-        "name": {"type": "string"},
-        "defaultProfile": {"type": "string"}
+        "name": {
+          "type": "string",
+          "description": "Project name shown in devx status/logs and used as the Compose project name."
+        },
+        "defaultProfile": {
+          "type": "string",
+          "description": "Profile to activate when none is specified with --profile."
+        }
       }
     },
     "registry": {
       "type": "object",
+      "description": "Container registry settings.",
+      "additionalProperties": false,
       "properties": {
-        "prefix": {"type": "string"}
+        "prefix": {
+          "type": "string",
+          "description": "Registry host prefix for image tags (e.g. 'ghcr.io/my-org')."
+        }
       }
     },
     "ai": {
       "type": "object",
-      "description": "Optional AI configuration used for automatic connection string detection (dep connect blocks) and 'devx export' deployment generation. Credentials are read from environment variables — never stored in devx.yaml.",
-      "required": ["provider", "model"],
+      "description": "Optional AI configuration used for automatic connection string detection (dep connect blocks), 'devx export' deployment generation, and 'devx ai' local inference setup. Credentials are read from environment variables — never stored in devx.yaml.",
+      "additionalProperties": false,
       "properties": {
         "provider": {
           "type": "string",
-          "enum": ["openai", "anthropic", "ollama", "azure-openai"],
-          "description": "LLM provider. Credentials: openai=OPENAI_API_KEY, anthropic=ANTHROPIC_API_KEY, azure-openai=AZURE_OPENAI_KEY, ollama=no key required."
+          "enum": [
+            "openai",
+            "anthropic",
+            "ollama",
+            "azure-openai",
+            "local"
+          ],
+          "description": "AI provider. Credentials: openai=OPENAI_API_KEY, anthropic=ANTHROPIC_API_KEY, azure-openai=AZURE_OPENAI_KEY, ollama/local=no key required."
         },
         "model": {
           "type": "string",
-          "description": "Model identifier, e.g. gpt-4o-mini, claude-3-5-haiku-latest, llama3.2"
+          "description": "Model identifier, e.g. gpt-4o-mini, claude-3-5-sonnet-latest, llama3.2."
         },
         "baseURL": {
           "type": "string",
-          "description": "Override the API endpoint. Required for azure-openai. Optional for ollama (default: http://localhost:11434)."
+          "description": "Override the provider's API endpoint. Required for azure-openai. Optional for ollama (default: http://localhost:11434)."
+        },
+        "local": {
+          "type": "object",
+          "description": "Local inference backend settings, used when provider is 'local'.",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "type": "string",
+              "description": "Inference engine: 'mlx' (Apple Silicon), 'ollama' (all platforms), 'remote', or 'auto' (detect).",
+              "enum": [
+                "mlx",
+                "ollama",
+                "remote",
+                "auto"
+              ],
+              "default": "auto"
+            },
+            "endpoint": {
+              "type": "string",
+              "description": "Base URL for a remote inference server (when backend is 'remote')."
+            },
+            "model": {
+              "type": "string",
+              "description": "Override the main chat model for local inference. Defaults to ai.model."
+            },
+            "autocompleteModel": {
+              "type": "string",
+              "description": "Fast model for inline tab completion (Continue.dev)."
+            }
+          }
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "description": "Required SDKs, runtimes, and CLI tools. Checked by 'devx doctor', installed by 'devx setup --fix' / 'devx doctor --fix'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tool name (e.g. 'dotnet', 'node', 'docker')."
+          },
+          "version": {
+            "type": "string",
+            "description": "Required version (e.g. '8', '20'). When omitted it is detected from .nvmrc, package.json, global.json, go.mod, .tool-versions or .python-version."
+          },
+          "check": {
+            "type": "string",
+            "description": "Shell command that succeeds when the tool is installed. Optional for node, npm, yarn, pnpm, python, go and dotnet."
+          },
+          "install": {
+            "type": "object",
+            "description": "Platform-specific install commands, run when the tool is missing.",
+            "additionalProperties": false,
+            "properties": {
+              "windows": {
+                "type": "string"
+              },
+              "macos": {
+                "type": "string"
+              },
+              "linux": {
+                "type": "string"
+              }
+            }
+          },
+          "installer": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "system"
+            ],
+            "description": "'auto' (default) prefers volta/fnm/nvm/corepack when available; 'system' only uses the install block."
+          }
+        }
+      }
+    },
+    "setup": {
+      "type": "array",
+      "description": "Ordered host-side commands run by 'devx setup'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Label shown during setup."
+          },
+          "run": {
+            "type": "string",
+            "description": "Shell command to execute. Mutually exclusive with 'workspace'."
+          },
+          "workdir": {
+            "type": "string",
+            "description": "Working directory override; defaults to cwd."
+          },
+          "runOnce": {
+            "type": "boolean",
+            "description": "Skip if this step ran before and its command hash hasn't changed (tracked in .devx/setup-state.json)."
+          },
+          "platform": {
+            "type": "string",
+            "description": "Restrict this step to a platform.",
+            "enum": [
+              "all",
+              "windows",
+              "linux",
+              "macos"
+            ],
+            "default": "all"
+          },
+          "workspace": {
+            "type": "string",
+            "enum": [
+              "auto"
+            ],
+            "description": "Run a single root install (npm ci / yarn install / pnpm install) for the detected JS workspace."
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "run"
+            ]
+          },
+          {
+            "required": [
+              "workspace"
+            ]
+          }
+        ]
+      }
+    },
+    "scripts": {
+      "type": "array",
+      "description": "Named scripts runnable with 'devx run <name>'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "run"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Script name (used with 'devx run <name>')."
+          },
+          "run": {
+            "type": "string",
+            "description": "Shell command to execute."
+          },
+          "desc": {
+            "type": "string",
+            "description": "Short description shown by 'devx run'."
+          },
+          "workdir": {
+            "type": "string",
+            "description": "Working directory override."
+          },
+          "container": {
+            "type": "string",
+            "description": "Where to run the script when a devcontainer is present: auto (default, run inside if running), true (always inside), false (always on host).",
+            "enum": [
+              "auto",
+              "true",
+              "false"
+            ],
+            "default": "auto"
+          }
         }
       }
     },
     "profiles": {
       "type": "object",
+      "description": "Named runtime profiles (local, ci, k8s, …). The one named in project.defaultProfile must exist.",
       "additionalProperties": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "runtime": {
             "type": "string",
-            "enum": ["compose", "k8s"]
+            "enum": [
+              "compose",
+              "k8s"
+            ],
+            "description": "Runtime to use for this profile. Defaults to compose."
           },
           "services": {
             "type": "object",
+            "description": "Application services (built from source or a prebuilt image).",
             "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "image": {"type": "string"},
-                "build": {
-                  "type": "object",
-                  "properties": {
-                    "context": {"type": "string"},
-                    "dockerfile": {"type": "string"}
-                  }
-                },
-                "ports": {"type": "array", "items": {"type": "string"}},
-                "env": {"type": "object", "additionalProperties": {"type": "string"}},
-                "command": {"type": "array", "items": {"type": "string"}},
-                "workdir": {"type": "string"},
-                "mount": {"type": "array", "items": {"type": "string"}},
-                "dependsOn": {"type": "array", "items": {"type": "string"}},
-                "health": {
-                  "type": "object",
-                  "properties": {
-                    "httpGet": {"type": "string"},
-                    "interval": {"type": "string"},
-                    "retries": {"type": "integer"}
-                  }
-                }
-              }
+              "$ref": "#/definitions/service"
             }
           },
           "deps": {
             "type": "object",
+            "description": "Third-party dependencies (databases, caches, …).",
+            "additionalProperties": {
+              "$ref": "#/definitions/dep"
+            }
+          },
+          "hooks": {
+            "$ref": "#/definitions/hooks"
+          }
+        }
+      }
+    },
+    "envFiles": {
+      "type": "array",
+      "description": "Local config/secret files generated by 'devx setup' from a template and values from env vars, commands or prompts. Existing files are kept unless --fix.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file",
+          "values"
+        ],
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string",
+            "description": "Template with ${KEY} placeholders; omit for dotenv KEY=value output."
+          },
+          "values": {
+            "type": "object",
             "additionalProperties": {
               "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "from"
+              ],
               "properties": {
-                "kind": {
+                "from": {
                   "type": "string",
-                  "description": "Provider type (e.g. postgres, redis). When set, devx downloads the provider binary for health checks and connection string injection. Provider source defaults to devx-labs/<kind>."
+                  "enum": [
+                    "env",
+                    "command",
+                    "prompt"
+                  ]
                 },
-                "source": {
+                "name": {
                   "type": "string",
-                  "description": "GitHub org/name of the provider, e.g. my-org/postgres. Defaults to devx-labs/<kind> when omitted. Only needed to override the default provider source."
+                  "description": "env: variable name (defaults to the key)."
                 },
-                "version": {
+                "run": {
                   "type": "string",
-                  "description": "Provider version. Convention: major = supported dependency major version. Example: '16.1.0' = provider for PostgreSQL 16, provider release 1.0. Required when kind is set."
+                  "description": "command: shell command whose stdout is the value."
                 },
-                "image": {
+                "secret": {
+                  "type": "boolean",
+                  "description": "prompt: do not echo input."
+                },
+                "default": {
                   "type": "string",
-                  "description": "The OCI image to run. Optional when kind is set — the provider's defaultImage is used if omitted. Explicit image always wins over provider default."
-                },
-                "env": {"type": "object", "additionalProperties": {"type": "string"}},
-                "ports": {"type": "array", "items": {"type": "string"}},
-                "volume": {"type": "string"},
-                "connect": {
-                  "type": "array",
-                  "description": "Services to inject connection environment variables into. devx resolves the env var names either via explicit mapping or AI-assisted detection.",
-                  "items": {
-                    "type": "object",
-                    "required": ["service"],
-                    "properties": {
-                      "service": {
-                        "type": "string",
-                        "description": "Name of the service to inject connection env vars into."
-                      },
-                      "env": {
-                        "type": "object",
-                        "additionalProperties": {"type": "string"},
-                        "description": "Explicit env var mapping. Values support template variables: ${host}, ${port}, and any key from the dep's own env block (e.g. ${POSTGRES_PASSWORD}). If omitted and AI is configured, devx detects the right names automatically by scanning the service's build context."
-                      }
-                    }
-                  }
+                  "description": "Fallback value; 'generate' creates a random 32-char hex string."
                 }
               }
             }
           }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "build": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "context": {
+              "type": "string"
+            },
+            "dockerfile": {
+              "type": "string"
+            }
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workdir": {
+          "type": "string"
+        },
+        "mount": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "httpGet": {
+              "type": "string"
+            },
+            "interval": {
+              "type": "string"
+            },
+            "retries": {
+              "type": "integer"
+            }
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "container",
+            "process"
+          ],
+          "default": "container",
+          "description": "'process' runs a host command (supervised by devx) instead of a container."
+        },
+        "run": {
+          "type": "string",
+          "description": "Shell command for kind: process. Mutually exclusive with command."
+        },
+        "ready": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Readiness gate; devx up waits for it before starting dependents.",
+          "properties": {
+            "http": {
+              "type": "string"
+            },
+            "tcp": {
+              "type": "string",
+              "description": "host:port"
+            },
+            "interval": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": "string"
+            }
+          }
+        },
+        "debug": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "port"
+          ],
+          "properties": {
+            "port": {
+              "type": "integer"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "node",
+                "python",
+                "go",
+                "java"
+              ]
+            }
+          },
+          "description": "Debugger port, used by 'devx debug-config'."
+        }
+      }
+    },
+    "dep": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Provider type (e.g. postgres, redis). When set, devx downloads the provider binary for health checks and connection string injection. Source defaults to devx-labs/<kind>."
+        },
+        "source": {
+          "type": "string",
+          "description": "GitHub org/name of the provider, e.g. my-org/postgres. Only needed to override the default."
+        },
+        "version": {
+          "type": "string",
+          "description": "Provider version. Convention: major = supported dependency major version, e.g. '16.1.0' = provider for Postgres 16, provider release 1.0. Required when kind is set."
+        },
+        "image": {
+          "type": "string",
+          "description": "OCI image to run. Optional when kind is set — the provider's defaultImage is used if omitted."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "volume": {
+          "type": "string"
+        },
+        "connect": {
+          "type": "array",
+          "description": "Services to inject connection environment variables into.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "service"
+            ],
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Explicit env var mapping. Supports ${host}, ${port}, and any key from the dep's own env block. If omitted and ai is configured, devx detects names automatically."
+              }
+            }
+          }
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "afterUp": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/hook"
+          }
+        },
+        "beforeDown": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/hook"
+          }
+        }
+      }
+    },
+    "hook": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Exactly one of exec or run must be set.",
+      "properties": {
+        "exec": {
+          "type": "string",
+          "description": "Command run inside an already-running service container via 'docker compose exec'. Requires service."
+        },
+        "service": {
+          "type": "string"
+        },
+        "run": {
+          "type": "string",
+          "description": "Host-side shell command."
+        },
+        "background": {
+          "type": "boolean",
+          "description": "Run without waiting for exit; devx up streams its output and blocks until it stops."
+        },
+        "name": {
+          "type": "string",
+          "description": "Label for output lines; defaults to the command."
         }
       }
     }

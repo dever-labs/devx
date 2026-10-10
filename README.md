@@ -1,6 +1,6 @@
 # devx
 
-[![CI](https://github.com/dever-labs/dever/actions/workflows/ci.yml/badge.svg)](https://github.com/dever-labs/dever/actions/workflows/ci.yml)
+[![CI](https://github.com/dever-labs/devx/actions/workflows/ci.yml/badge.svg)](https://github.com/dever-labs/devx/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/dever-labs/devx)](https://goreportcard.com/report/github.com/dever-labs/devx)
 
@@ -17,12 +17,12 @@ devx down        # tear down
 
 **Linux / macOS**
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.sh | sh
 ```
 
 **Windows (PowerShell)**
 ```powershell
-iwr https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.ps1 | iex
+iwr https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.ps1 | iex
 ```
 
 **npm**
@@ -42,7 +42,7 @@ choco install devx
 winget install dever-labs.devx
 ```
 
-Pre-built binaries for all platforms are also available on the [Releases](https://github.com/dever-labs/dever/releases) page — download, make executable, and place on your `PATH`.
+Pre-built binaries for all platforms are also available on the [Releases](https://github.com/dever-labs/devx/releases) page — download, make executable, and place on your `PATH`.
 See [docs/install.md](docs/install.md) for all methods including step-by-step manual setup.
 
 ## Quickstart
@@ -50,7 +50,7 @@ See [docs/install.md](docs/install.md) for all methods including step-by-step ma
 ```sh
 devx init               # scaffold a starter devx.yaml
 # edit devx.yaml to match your repo
-devx up                 # start services + telemetry stack
+devx up                 # start services (add --telemetry for the Grafana stack)
 ```
 
 After startup, devx prints the URLs of every published service:
@@ -60,30 +60,51 @@ Environment is up
 
 Available services:
   Api      http://localhost:8080
-  Grafana  http://localhost:54231
+  Grafana  http://localhost:54231   # only with --telemetry
 ```
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `devx init` | Scaffold a starter `devx.yaml` in the current directory |
+| `devx init` | Interactive project scaffold (`devx.yaml` + devcontainer) |
 | `devx setup` | Install required tools and run host-side setup steps |
+| `devx run [script]` | Run a script defined in `devx.yaml` |
+| `devx clone <repo> [dir]` | Clone a repo and run `devx setup` |
 | `devx up` | Start all services for the active profile |
-| `devx down` | Stop and remove containers |
-| `devx status` | Show running containers, state, and published ports |
+| `devx down` | Stop containers and host processes |
+| `devx status` | Show project, devcontainer, and AI status |
 | `devx logs [service]` | Stream logs from one or all services |
 | `devx exec <service> -- <cmd>` | Run a command inside a running service |
-| `devx doctor` | Check runtime and tool prerequisites |
+| `devx doctor` | Health-check tools, backends, and config |
 | `devx validate` | Validate `devx.yaml` schema and configuration |
-| `devx render compose` | Print the generated Docker Compose file |
-| `devx render k8s` | Render Kubernetes manifests from a profile |
+| `devx render compose\|k8s` | Render the Docker Compose file or Kubernetes manifests |
 | `devx lock update` | Resolve and pin image digests to `devx.lock` |
+| `devx providers install\|list` | Manage third-party dependency providers declared in `devx.yaml` |
+| `devx export --format <fmt>` | Export a profile as `compose`, `k8s`, `helm`, or `terraform` |
+| `devx ai` | AI setup wizard, or launch the configured AI tool |
+| `devx ai chat [question]` | One-off AI question |
+| `devx ai setup\|status\|reset` | Configure, inspect, or reset the local/cloud AI backend |
+| `devx ai model list\|pull\|remove` | Manage local AI models |
+| `devx debug-config [--write]` | Generate VS Code attach configs for services with a `debug` block |
+| `devx dev` | Show devcontainer status |
+| `devx dev build\|rebuild\|up\|open\|exec\|shell\|logs\|ps` | Manage the devcontainer lifecycle |
+| `devx env [--show]` | Show/validate env vars from the devcontainer + `.env` |
+| `devx auth` | Check auth status for GitHub, Anthropic, OpenAI |
+| `devx new service\|dep` | Add a service or dependency to `devx.yaml` |
+| `devx ci [--write] [--stack ...]` | Generate a GitHub Actions CI workflow for the detected stack |
+| `devx ci run [--job <name>]` | Run CI locally with [`act`](https://github.com/nektos/act) |
+| `devx update [--check]` | Update devx to the latest version |
+| `devx completion bash\|zsh\|fish` | Generate shell completions |
+| `devx version` | Print the devx version |
+
+Run `devx help` for the full usage text with all flags.
 
 ### Flags
 
 **`devx setup`**
-- `--fix` — install missing tools and re-run `runOnce` steps
+- `--fix` — install missing tools, re-run `runOnce` steps, regenerate `envFiles`
+- `--non-interactive` — never prompt; fail listing the missing values
 - `--json` — emit results as JSON (AI/CI friendly)
 
 **`devx doctor`**
@@ -92,12 +113,17 @@ Available services:
 
 **`devx validate`**
 - `--file <path>` — path to `devx.yaml` (default: `./devx.yaml`)
+- `--json` — emit `{"valid": bool, "issues": [...]}` (AI/CI friendly)
+
+**`devx auth`**
+- `--json` — emit auth status as a JSON array (AI/CI friendly)
 
 **`devx up`**
 - `--profile <name>` — select a profile (default: `defaultProfile` in devx.yaml)
 - `--build` — rebuild images before starting
 - `--pull` — always pull latest images
-- `--no-telemetry` — skip the built-in observability stack
+- `--telemetry` — also start the built-in observability stack (off by default)
+- `--attach <service>` — run a process service in the foreground with your terminal attached (debuggers, REPLs)
 
 **`devx down`**
 - `--volumes` — also remove named volumes
@@ -109,16 +135,51 @@ Available services:
 
 **`devx render compose`**
 - `--write` — write output to `.devx/compose.yaml` instead of stdout
-- `--no-telemetry` — exclude telemetry services
+- `--telemetry` — include telemetry services (off by default)
 
 **`devx render k8s`**
 - `--profile <name>` — profile to render
 - `--namespace <ns>` — Kubernetes namespace
 - `--write` — write to `.devx/k8s.yaml`
 
-**`devx doctor`**
-- `--fix` — install missing tools and attempt to fix detected issues
+**`devx export`**
+- `--format <fmt>` — required; one of `compose`, `k8s`, `helm`, `terraform`
+- `--profile <name>` — profile to export
+- `--out <dir>` — output directory (default: `.`)
+
+**`devx status`**
 - `--json` — emit report as JSON
+
+**`devx env`**
+- `--show` — reveal secret values instead of masking them
+
+**`devx ci`**
+- `--write` — write `.github/workflows/ci.yml` instead of printing to stdout
+- `--stack <name>` — override stack detection (`dotnet`, `node`, `go`, `python`)
+
+**`devx ci run`**
+- `--job <name>` — run a specific job with `act` instead of the whole workflow
+
+**`devx update`**
+- `--check` — only check for a newer version, don't install it
+
+## Running processes without containers
+
+Services can be host processes instead of containers, so repos that just run `yarn dev` work with the same `up/status/logs/down/exec` commands. Containers and processes can be mixed in one profile; devx orders them by `dependsOn`, waits for each `ready` probe, and `devx up` returns once everything is ready.
+
+```yaml
+services:
+  web:
+    kind: process
+    run: yarn dev
+    workdir: ./packages/web
+    ports: ["3000"]
+    dependsOn: [db]
+    ready: { http: http://localhost:3000/health }
+    debug: { port: 9229, type: node }
+```
+
+Logs go to `.devx/logs/<service>.log`; state to `.devx/processes.json`. See [docs/manifest.md](docs/manifest.md#process-services) and `examples/process/`.
 
 ## Tools and setup
 
@@ -147,6 +208,16 @@ tools:
       linux: "wget https://dot.net/v1/dotnet-install.sh -O install.sh && bash install.sh --version 8.0"
 ```
 
+Tools can be minimal. For node, npm, yarn, pnpm, python, go and dotnet, `check` is optional and `version` is detected from the repo (`.nvmrc`, `.node-version`, `package.json` `engines`/`packageManager`, `global.json`, `go.mod`, `.tool-versions`, `.python-version`). An explicit value in `devx.yaml` always wins; `devx doctor` warns when it conflicts with the detected one.
+
+```yaml
+tools:
+  - name: node   # version from .nvmrc
+  - name: yarn   # version from package.json#packageManager
+```
+
+`devx setup --fix` installs through volta, fnm, nvm or corepack when present. Set `installer: system` on a tool to use only its `install` block.
+
 ### Declaring setup steps
 
 Add a `setup` block to `devx.yaml` for host-side commands that run after tools are installed. Steps with `runOnce: true` are skipped on subsequent runs if their command hasn't changed (tracked in `.devx/setup-state.json`).
@@ -167,6 +238,30 @@ setup:
     run: "dotnet ef database update --project src/Api"
     platform: all         # all | windows | linux | macos (default: all)
 ```
+
+In a JS monorepo use `workspace: auto` to run a single root install (`yarn install`, `pnpm install` or `npm ci`, chosen from `packageManager`/lockfiles). With no `setup` block at all, devx does this automatically when it detects a workspace.
+
+```yaml
+setup:
+  - name: install
+    workspace: auto
+```
+
+### Local config and secrets
+
+`envFiles` generates gitignored local config from a template. Values come from env vars, commands (`op read`, `vault kv get`, ...) or prompts. Existing files are never overwritten unless `--fix`; secret values never appear in logs or `--json` output.
+
+```yaml
+envFiles:
+  - file: app-config.local.yaml
+    template: app-config.local.yaml.tmpl   # ${KEY} placeholders; omit for KEY=value lines
+    values:
+      GITHUB_TOKEN: { from: env, name: GITHUB_TOKEN }
+      DB_PASS:      { from: command, run: "op read op://dev/db/pass" }
+      SESSION_KEY:  { from: prompt, secret: true, default: generate }
+```
+
+In non-interactive mode (CI, `--json`, `--non-interactive`) missing values fail with a list of the keys.
 
 ### Running setup
 
@@ -190,7 +285,7 @@ See [docs/manifest.md](docs/manifest.md) for the full schema and all supported f
 
 ## Built-in telemetry stack
 
-devx starts a full observability stack alongside your services:
+devx can start a full observability stack alongside your services (opt-in with `devx up --telemetry`):
 
 | Component | Role |
 |---|---|
@@ -210,7 +305,7 @@ Four pre-built dashboards are provisioned automatically:
 
 See [docs/telemetry.md](docs/telemetry.md) for details.
 
-Disable with `devx up --no-telemetry`.
+Telemetry is off by default. Enable it with `devx up --telemetry`.
 
 ## Profiles
 

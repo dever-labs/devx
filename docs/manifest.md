@@ -2,11 +2,18 @@
 
 `devx.yaml` is the single manifest file that describes your project's services, dependencies, and profiles.
 
+A JSON Schema is maintained at [`schemas/devx.schema.json`](../schemas/devx.schema.json). `devx init`
+writes a `# yaml-language-server: $schema=...` header into generated manifests, which gives you
+autocomplete and inline validation in any editor that supports the [yaml-language-server](https://github.com/redhat-developer/yaml-language-server)
+protocol (VS Code with the YAML extension, Neovim, etc.) — add the same header to an existing
+`devx.yaml` to opt in.
+
 ---
 
 ## Top-level structure
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dever-labs/devx/main/schemas/devx.schema.json
 version: 1
 
 project:
@@ -128,6 +135,40 @@ services:
 
 ---
 
+## Process services
+
+Set `kind: process` to run a host command (supervised by devx) instead of a container. Use it for repos that are not containerised, or to run one service natively while its dependencies stay in containers.
+
+```yaml
+services:
+  web:
+    kind: process
+    run: yarn dev            # or command: ["yarn", "dev"]
+    workdir: ./packages/web
+    ports: ["3000"]
+    env:
+      PORT: "3000"
+    dependsOn: [db]
+    ready:
+      http: http://localhost:3000/health   # or tcp: localhost:3000
+      timeout: 2m
+      interval: 2s
+    debug: { port: 9229, type: node }
+```
+
+| Field | Description |
+|---|---|
+| `kind` | `container` (default) or `process`. Not allowed with the `k8s` runtime. |
+| `run` / `command` | Shell string or argv list; exactly one is required for processes. |
+| `workdir` | Host working directory. |
+| `ready.http` / `ready.tcp` | Readiness probe; `devx up` waits for it before starting dependents. Works for containers too. Processes with `ports` and no `ready` get a TCP probe by default. |
+| `ready.interval` / `ready.timeout` | Probe cadence and overall limit (default 2 minutes). |
+| `debug.port` / `debug.type` | Used by `devx debug-config` (`node`, `python`, `go`, `java`). |
+
+Processes cannot set `image`, `build` or `mount`. Containers that depend on a process reach it at `host.docker.internal`; processes reach published dependency ports on `localhost`. A process that exits before becoming ready fails `devx up` immediately. Use `devx up --attach web` to run one process in the foreground with your terminal attached.
+
+---
+
 ## Deps
 
 Deps are managed infrastructure containers (databases, caches). devx handles the image and standard configuration for each `kind`.
@@ -169,6 +210,8 @@ deps:
 ---
 
 ## Health checks
+
+> `ready` (see [Process services](#process-services)) supersedes `health.httpGet`, which remains supported.
 
 When a service has a `health.httpGet` URL, `devx up` polls it after containers start. The command blocks until all health checks pass (up to 2 minutes), then prints the service links.
 

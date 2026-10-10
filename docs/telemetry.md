@@ -128,13 +128,13 @@ docker_container_network_tx_bytes_total{compose_service="api", interface="eth0"}
 
 ---
 
-## Disabling telemetry
+## Enabling telemetry
 
 ```sh
-devx up --no-telemetry
+devx up --telemetry
 ```
 
-The telemetry containers are simply not started. All other service behaviour is unchanged.
+Telemetry is off by default; without the flag the telemetry containers are not started. (`--no-telemetry` is still accepted but is now a no-op.)
 
 ---
 
@@ -151,4 +151,4 @@ The telemetry stack is lightweight by design:
 | cAdvisor | ~30 MB |
 | docker-meta exporter | ~20 MB |
 
-Total: ~330 MB. Use `--no-telemetry` on memory-constrained machines.
+Total: ~330 MB. It is opt-in, so single-service repos pay no overhead by default.
