@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $packageVersion = $env:ChocolateyPackageVersion
 $packageName    = "devx"
-$repo           = "dever-labs/dever"
+$repo           = "dever-labs/devx"
 
 $arch = if ([System.Environment]::Is64BitOperatingSystem) {
     if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") { "arm64" } else { "amd64" }

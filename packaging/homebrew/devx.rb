@@ -1,26 +1,26 @@
 # Documentation: https://docs.brew.sh/Formula-Cookbook
 class Devx < Formula
   desc "Cross-platform dev environment orchestrator"
-  homepage "https://github.com/dever-labs/dever"
+  homepage "https://github.com/dever-labs/devx"
   version "{{VERSION}}"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/dever-labs/dever/releases/download/v#{version}/devx-darwin-arm64"
+      url "https://github.com/dever-labs/devx/releases/download/v#{version}/devx-darwin-arm64"
       sha256 "{{SHA256_DARWIN_ARM64}}"
     else
-      url "https://github.com/dever-labs/dever/releases/download/v#{version}/devx-darwin-amd64"
+      url "https://github.com/dever-labs/devx/releases/download/v#{version}/devx-darwin-amd64"
       sha256 "{{SHA256_DARWIN_AMD64}}"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/dever-labs/dever/releases/download/v#{version}/devx-linux-arm64"
+      url "https://github.com/dever-labs/devx/releases/download/v#{version}/devx-linux-arm64"
       sha256 "{{SHA256_LINUX_ARM64}}"
     else
-      url "https://github.com/dever-labs/dever/releases/download/v#{version}/devx-linux-amd64"
+      url "https://github.com/dever-labs/devx/releases/download/v#{version}/devx-linux-amd64"
       sha256 "{{SHA256_LINUX_AMD64}}"
     end
   end

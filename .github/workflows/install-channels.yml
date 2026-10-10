@@ -1,0 +1,112 @@
+name: Install channels
+
+# PRs: lint the packaging manifests offline (no release needed).
+# After a release (or manually with a tag): really install devx through each
+# channel and run it, so a broken channel is caught before users hit it.
+on:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "scripts/**"
+      - ".github/workflows/install-channels.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  manifests:
+    name: Lint packaging manifests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # node24
+
+      - name: Shell installer syntax
+        run: sh -n scripts/install.sh
+
+      - name: Homebrew formula generates and parses
+        run: |
+          python3 scripts/generate-formula.py 0.0.1 a b c d > /tmp/devx.rb
+          ruby -c /tmp/devx.rb
+          ruby -c packaging/homebrew/devx.rb
+
+      - name: npm package packs and installer parses
+        working-directory: packaging/npm
+        run: |
+          node --check install.js
+          npm pack --dry-run
+
+      - name: Chocolatey nuspec and winget manifests are well-formed
+        run: |
+          python3 - <<'PY'
+          import sys, glob, xml.dom.minidom as m
+          m.parse("packaging/chocolatey/devx.nuspec")
+          for f in glob.glob("packaging/winget/*.yaml"):
+              if "dever-labs/dever/" in open(f).read():
+                  sys.exit(f"stale repo slug in {f}")
+          PY
+
+      - name: No stale repository slug
+        run: |
+          if grep -rnP 'dever-labs/dever(?![\w-])' packaging scripts README.md docs; then
+            echo "::error::found reference to dever-labs/dever (should be dever-labs/devx)"; exit 1
+          fi
+
+  published:
+    name: ${{ matrix.channel }} on ${{ matrix.os }}
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, channel: script }
+          - { os: macos-latest, channel: script }
+          - { os: windows-latest, channel: script }
+          - { os: ubuntu-latest, channel: npm }
+          - { os: macos-latest, channel: homebrew }
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # node24
+
+      - name: Install (script, unix)
+        if: matrix.channel == 'script' && runner.os != 'Windows'
+        run: |
+          mkdir -p "$HOME/bin"
+          DEVX_INSTALL_DIR="$HOME/bin" sh scripts/install.sh "$TAG"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Install (script, windows)
+        if: matrix.channel == 'script' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/install.ps1 -Version $env:TAG -InstallDir "$env:RUNNER_TEMP\devx"
+          "$env:RUNNER_TEMP\devx" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Install (npm)
+        if: matrix.channel == 'npm'
+        working-directory: packaging/npm
+        run: |
+          npm version "${TAG#v}" --no-git-tag-version
+          npm pack
+          npm install -g ./dever-labs-devx-*.tgz
+
+      - name: Install (homebrew)
+        if: matrix.channel == 'homebrew'
+        run: brew install dever-labs/tap/devx
+
+      - name: Verify
+        shell: bash
+        run: |
+          devx version
+          cd "$(mktemp -d)"
+          printf 'version: 1\nproject:\n  name: smoke\n  defaultProfile: local\nprofiles:\n  local:\n    services:\n      web:\n        image: nginx:alpine\n' > devx.yaml
+          devx validate

@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-const REPO = "dever-labs/dever";
+const REPO = "dever-labs/devx";
 const BIN_DIR = path.join(__dirname, "bin");
 const VERSION = require("./package.json").version;
 
@@ -69,5 +69,5 @@ async function main() {
 main().catch((e) => {
   // Non-fatal: user can still install manually
   console.warn("[devx] Postinstall failed:", e.message);
-  console.warn("[devx] Install manually: https://github.com/dever-labs/dever/releases");
+  console.warn("[devx] Install manually: https://github.com/dever-labs/devx/releases");
 });

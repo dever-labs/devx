@@ -3,12 +3,12 @@
   "version": "0.0.0",
   "description": "devx — cross-platform dev environment orchestrator",
   "keywords": ["devx", "docker", "compose", "dev", "orchestrator"],
-  "homepage": "https://github.com/dever-labs/dever",
-  "bugs": "https://github.com/dever-labs/dever/issues",
+  "homepage": "https://github.com/dever-labs/devx",
+  "bugs": "https://github.com/dever-labs/devx/issues",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dever-labs/dever.git",
-    "directory": "npm"
+    "url": "https://github.com/dever-labs/devx.git",
+    "directory": "packaging/npm"
   },
   "license": "MIT",
   "bin": {

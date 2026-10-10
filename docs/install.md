@@ -8,19 +8,19 @@ devx is available through several package managers and a direct download.
 
 **Linux / macOS**
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.sh | sh
 ```
 
 **Windows (PowerShell)**
 ```powershell
-iwr https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.ps1 | iex
+iwr https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.ps1 | iex
 ```
 
 ---
 
 ## Manual setup
 
-Download a pre-built binary from [GitHub Releases](https://github.com/dever-labs/dever/releases/latest):
+Download a pre-built binary from [GitHub Releases](https://github.com/dever-labs/devx/releases/latest):
 
 | Platform | File |
 |----------|------|
@@ -37,7 +37,7 @@ SHA-256 checksums are published alongside each release in `checksums.txt`.
 
 ```sh
 # Replace <version> and <platform> with e.g. v1.0.0 and linux-amd64
-curl -Lo devx https://github.com/dever-labs/dever/releases/download/<version>/devx-<platform>
+curl -Lo devx https://github.com/dever-labs/devx/releases/download/<version>/devx-<platform>
 chmod +x devx
 sudo mv devx /usr/local/bin/devx
 devx version
@@ -55,7 +55,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Windows
 
-1. Download `devx-windows-amd64.exe` from the [Releases](https://github.com/dever-labs/dever/releases/latest) page.
+1. Download `devx-windows-amd64.exe` from the [Releases](https://github.com/dever-labs/devx/releases/latest) page.
 2. Rename it to `devx.exe` and move it to a folder of your choice, e.g. `C:\Tools\devx\`.
 3. Add that folder to your `PATH`:
    - Open **System Properties → Advanced → Environment Variables**.
@@ -73,7 +73,7 @@ Alternatively, from PowerShell (no admin required):
 $dir = "$env:LOCALAPPDATA\devx"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 # Download
-Invoke-WebRequest https://github.com/dever-labs/dever/releases/latest/download/devx-windows-amd64.exe `
+Invoke-WebRequest https://github.com/dever-labs/devx/releases/latest/download/devx-windows-amd64.exe `
     -OutFile "$dir\devx.exe"
 # Add to PATH for current user
 $path = [System.Environment]::GetEnvironmentVariable("Path","User")
@@ -142,7 +142,7 @@ winget upgrade dever-labs.devx
 Requires [Go 1.21+](https://go.dev/dl/).
 
 ```sh
-git clone https://github.com/dever-labs/dever.git
+git clone https://github.com/dever-labs/devx.git
 cd dever
 go build ./cmd/devx
 ./devx version
@@ -162,8 +162,8 @@ Binaries are placed in `dist/`.
 
 ```sh
 # Download the binary and checksums file
-curl -LO https://github.com/dever-labs/dever/releases/latest/download/devx-linux-amd64
-curl -LO https://github.com/dever-labs/dever/releases/latest/download/checksums.txt
+curl -LO https://github.com/dever-labs/devx/releases/latest/download/devx-linux-amd64
+curl -LO https://github.com/dever-labs/devx/releases/latest/download/checksums.txt
 
 # Verify
 sha256sum --check --ignore-missing checksums.txt

@@ -1,6 +1,6 @@
 # devx npm package
 
-This package installs the [devx](https://github.com/dever-labs/dever) binary for your platform.
+This package installs the [devx](https://github.com/dever-labs/devx) binary for your platform.
 
 ## Install
 

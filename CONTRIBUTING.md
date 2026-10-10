@@ -20,15 +20,15 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ## Getting started
 
-1. [Fork](https://github.com/dever-labs/dever/fork) the repository.
+1. [Fork](https://github.com/dever-labs/devx/fork) the repository.
 2. Clone your fork:
    ```sh
-   git clone https://github.com/<your-username>/dever.git
-   cd dever
+   git clone https://github.com/<your-username>/devx.git
+   cd devx
    ```
 3. Add the upstream remote:
    ```sh
-   git remote add upstream https://github.com/dever-labs/dever.git
+   git remote add upstream https://github.com/dever-labs/devx.git
    ```
 
 ## Development setup
@@ -119,3 +119,16 @@ Use the [Bug Report](.github/ISSUE_TEMPLATE/bug_report.md) issue template. Inclu
 ## Requesting features
 
 Use the [Feature Request](.github/ISSUE_TEMPLATE/feature_request.md) issue template. Describe the problem you're trying to solve and why it belongs in devx.
+
+## Releasing (maintainers)
+
+Releases are cut manually by pushing a version tag; nothing tags automatically.
+
+1. Move the `[Unreleased]` entries in `CHANGELOG.md` under the new version and commit to `main`.
+2. Make sure CI is green on `main`.
+3. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+4. The `Release` workflow tests, builds all six binaries, publishes them with `checksums.txt`, and updates the Homebrew tap (needs the `TAP_GITHUB_TOKEN` secret).
+5. When the release is published, the `Install channels` workflow installs devx via the script, npm and Homebrew and runs `devx version` + `devx validate`. Re-run it manually with a tag via *Actions → Install channels → Run workflow*.
+6. Publish to the remaining channels by hand: `npm publish` from `packaging/npm` (set the version first), and submit the Chocolatey and winget manifests from `packaging/` with the new version and checksums.
+
+Pull requests that touch `packaging/` or `scripts/` are linted offline by the same workflow.

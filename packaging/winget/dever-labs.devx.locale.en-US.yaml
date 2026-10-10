@@ -5,9 +5,9 @@ PackageLocale: en-US
 Publisher: dever-labs
 PublisherUrl: https://github.com/dever-labs
 PackageName: devx
-PackageUrl: https://github.com/dever-labs/dever
+PackageUrl: https://github.com/dever-labs/devx
 License: MIT
-LicenseUrl: https://github.com/dever-labs/dever/blob/main/LICENSE
+LicenseUrl: https://github.com/dever-labs/devx/blob/main/LICENSE
 ShortDescription: Cross-platform dev environment orchestrator
 Description: >-
   devx lets you define your services, dependencies and telemetry stack in a
@@ -22,6 +22,6 @@ Tags:
   - cli
   - devops
   - kubernetes
-ReleaseNotesUrl: https://github.com/dever-labs/dever/releases/tag/v{{VERSION}}
+ReleaseNotesUrl: https://github.com/dever-labs/devx/releases/tag/v{{VERSION}}
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0
