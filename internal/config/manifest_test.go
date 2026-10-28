@@ -201,3 +201,102 @@ func TestValidate_UnknownDep(t *testing.T) {
 		t.Fatalf("expected validation error for unknown dep")
 	}
 }
+
+func TestValidate_WrongVersion(t *testing.T) {
+	m := &Manifest{Version: 2, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+	}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error when version != 1")
+	}
+}
+
+func TestValidate_NoTasks(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error when there are no tasks")
+	}
+}
+
+func TestValidate_AIBlockRequiresProviderAndModel(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+	}, AI: &AIConfig{}}
+	err := Validate(m)
+	if err == nil {
+		t.Fatal("expected validation error for an ai: block with no provider/model")
+	}
+	ve, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected *ValidationError, got %T", err)
+	}
+	if len(ve.Issues) != 2 {
+		t.Fatalf("expected 2 issues (missing provider + model), got %v", ve.Issues)
+	}
+}
+
+func TestValidate_AIBlockValid(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+	}, AI: &AIConfig{Provider: "openai", Model: "gpt-4"}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no error for a complete ai: block, got %v", err)
+	}
+}
+
+func TestValidate_RestartRequiresValidValue(t *testing.T) {
+	detached := true
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", Detached: &detached, Restart: "sometimes"},
+	}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for an invalid restart: value")
+	}
+}
+
+func TestValidate_RestartOnlyValidOnDetached(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", Restart: "always"},
+	}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for restart: on a non-detached task")
+	}
+}
+
+func TestValidate_RestartValidOnDetached(t *testing.T) {
+	detached := true
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", Detached: &detached, Restart: "on-failure"},
+	}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no error for restart: on a detached task, got %v", err)
+	}
+}
+
+func TestValidate_ScopeMustBeWorkspaceOrShared(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", Scope: "global"},
+	}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for an invalid scope: value")
+	}
+}
+
+func TestValidate_ScopeWorkspaceIsValid(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "docker run --name db-${workspace}", Scope: "workspace"},
+	}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no error for scope: workspace with ${workspace}, got %v", err)
+	}
+}
+
+func TestValidate_ValidManifestHasNoError(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+		"b": {Name: "b", Run: "echo b", Deps: []string{"a"}},
+	}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no error for a well-formed manifest, got %v", err)
+	}
+}

@@ -98,3 +98,37 @@ setup:
 		t.Fatalf("expected error for bad platform")
 	}
 }
+
+func TestValidateSetup_MissingName(t *testing.T) {
+	data := []byte(`version: 1
+project:
+  name: my-app
+api: ./bin/api
+setup:
+  - run: "npm install"
+`)
+	m, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if err := ValidateSetup(m); err == nil {
+		t.Fatalf("expected error for missing setup step name")
+	}
+}
+
+func TestValidateSetup_MissingRun(t *testing.T) {
+	data := []byte(`version: 1
+project:
+  name: my-app
+api: ./bin/api
+setup:
+  - name: install-deps
+`)
+	m, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if err := ValidateSetup(m); err == nil {
+		t.Fatalf("expected error for missing setup step run")
+	}
+}

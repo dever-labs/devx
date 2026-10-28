@@ -57,7 +57,12 @@ type processHandle struct {
 	cmd     *exec.Cmd
 	logFile *os.File
 	logPath string
-	done    chan error
+	// exited is closed exactly once, when cmd.Wait() returns — this lets
+	// Wait and Status be called any number of times (in any order) and
+	// still observe a consistent terminal result, unlike a single-value
+	// channel that only the first reader can drain.
+	exited  chan struct{}
+	exitErr error // valid only once exited is closed
 }
 
 func (d *processDriver) Start(ctx context.Context, et *EffectiveTask, logPath string) (Handle, error) {
@@ -86,9 +91,10 @@ func (d *processDriver) Start(ctx context.Context, et *EffectiveTask, logPath st
 		return nil, fmt.Errorf("start task %q: %w", et.Name, err)
 	}
 
-	h := &processHandle{cmd: cmd, logFile: logFile, logPath: logPath, done: make(chan error, 1)}
+	h := &processHandle{cmd: cmd, logFile: logFile, logPath: logPath, exited: make(chan struct{})}
 	go func() {
-		h.done <- cmd.Wait()
+		h.exitErr = cmd.Wait()
+		close(h.exited)
 		logFile.Close()
 	}()
 	return h, nil
@@ -119,8 +125,8 @@ func envSlice(env map[string]string) []string {
 
 func (h *processHandle) Wait(ctx context.Context) error {
 	select {
-	case err := <-h.done:
-		return err
+	case <-h.exited:
+		return h.exitErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -128,10 +134,8 @@ func (h *processHandle) Wait(ctx context.Context) error {
 
 func (h *processHandle) Status(ctx context.Context) (string, error) {
 	select {
-	case err := <-h.done:
-		// drain back for any later caller — best-effort, not re-sent
-		go func() { h.done <- err }()
-		if err != nil {
+	case <-h.exited:
+		if h.exitErr != nil {
 			return "crashed", nil
 		}
 		return "exited", nil
@@ -148,7 +152,7 @@ func (h *processHandle) Stop(ctx context.Context, timeout time.Duration) error {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 
 	select {
-	case <-h.done:
+	case <-h.exited:
 		return nil
 	case <-time.After(timeout):
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
