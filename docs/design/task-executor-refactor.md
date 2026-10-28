@@ -117,12 +117,18 @@ prerequisite" concept (see "Alternatives considered").
 
 - **Readiness**: if `run:` exposes a port (parsed from `-p`/`--port`, or
   an explicit `port:` field), default to an HTTP GET on
-  `http://localhost:<port>/healthz` with short retry/timeout; an outright
-  connection refusal (no HTTP server there at all) falls back to a plain
-  TCP connect on the same port; no known port → ready immediately. No
-  Docker-specific healthcheck coupling — identical whether `run:` launches
-  a container or a bare process. `ready:` only needs to be written to
-  override this (non-standard path, or a `cmd:` check).
+  `http://localhost:<port>/healthz` with short retry/timeout; if that
+  exchange fails for *any* reason other than a clean 2xx/3xx/4xx HTTP
+  response — connection refused, reset, timeout, or a non-HTTP peer
+  closing/garbling the connection (e.g. Postgres on its native port) —
+  fall back to a plain TCP connect on the same port; no known port →
+  ready immediately. This matters: a port being open doesn't imply the
+  thing listening on it speaks HTTP, so "falls back on refusal" alone
+  would never trigger for most non-HTTP services. No Docker-specific
+  healthcheck coupling — identical whether `run:` launches a container or
+  a bare process. `ready:` only needs to be written to override this
+  (non-standard path, or a `cmd:` check — exit code `0` means ready, any
+  other exit code or a timeout means not-yet-ready and the check retries).
 - **Detached vs one-shot**: a task with a port or a `ready:` is almost
   certainly long-running, so default `detached: true`; otherwise default
   `detached: false` (block until exit code). Named `detached` (the term
@@ -157,20 +163,32 @@ out:
 - **`os: [linux, darwin, windows]`** — skip this task entirely (not an
   error) when the host OS isn't in the list. Relevant because devx already
   does cross-platform tool detection/`doctor`; some recipes (Homebrew
-  installs, WSL-specific steps) are legitimately OS-specific.
+  installs, WSL-specific steps) are legitimately OS-specific. A skipped
+  task is treated as satisfied for anything that depends on it (same
+  outcome as a `sources:`/`generates:` "up to date" skip below) — the
+  dependent proceeds rather than failing or being skipped itself.
 - **`interactive: true`** — attach the task's stdin/stdout/stderr directly
   to the terminal instead of capturing output for `devx logs`, for tasks
   that need a live TTY (a `psql` shell, an interactive debugger). Mirrors
-  the gap already implied by today's `Service.Debug` field.
+  the gap already implied by today's `Service.Debug` field. Mutually
+  exclusive with `detached: true` (validation error): an interactive
+  task needs a terminal attached to one foreground invocation, which
+  doesn't make sense for a supervised background process whose output
+  also needs to be captured for `devx logs`.
 - **`sources: [glob, ...]` / `generates: [glob, ...]`** — Make's actual
   core feature (skip a recipe if the target is already up to date versus
   its prerequisites), applied to one-shot tasks instead of files-as-targets
   generically. If every `generates:` glob match has a newer mtime than
   every `sources:` glob match, `devx run`/`up` skips the recipe (reports
-  "up to date", same spirit as Make's own skip message). Opt-in — a task
-  with neither field always runs. High value for expensive one-shot steps
-  (codegen, compiling a tool, migrations keyed off a migrations
-  directory) that are wasteful to always re-run.
+  "up to date", same spirit as Make's own skip message) and anything
+  depending on it treats the skip as satisfied, exactly like an `os:`
+  skip above. Opt-in — a task with neither field always runs. High value
+  for expensive one-shot steps (codegen, compiling a tool, migrations
+  keyed off a migrations directory) that are wasteful to always re-run.
+  Only meaningful for one-shot tasks — `detached: true` together with
+  either field is a validation error, since a supervised long-running
+  process has no single "run to completion" point to compare timestamps
+  against.
 
 ```yaml
 # --- env: vs vars: ---
@@ -440,6 +458,12 @@ var Drivers = map[string]Driver{
     "command":  commandDriver{}, // one-shot shell, absorbs today's Script/Hook
 }
 
+// Start's blocking behavior depends on the task, not the driver type:
+// a one-shot task (t.Detached == false) blocks until the recipe exits and
+// returns a Handle already in its terminal Status(); a detached task
+// (t.Detached == true) returns as soon as the process/container is
+// launched, with a Handle whose Status() reflects the live supervised
+// process until Stop() is called.
 type Driver interface {
     Start(ctx context.Context, t Task) (Handle, error)
 }
@@ -527,53 +551,58 @@ one.
   target). Reviewed and rejected: no identified use case in a dev-env
   manifest; one task name should mean one recipe.
 
-## Migration plan
+## Implementation plan
 
-1. `internal/config`: `Manifest` gains `Vars map[string]string`,
-   `Includes map[string]string`, `Tasks map[string]Task`, where `Task`
-   unmarshals from either a YAML scalar (shorthand) or a mapping via a
-   custom `UnmarshalYAML`. Additive — old `profiles:`/`scripts:`/`hooks:`
-   keep working until step 4.
+This is a breaking rewrite, not a migration: `Service`/`Dep`/`Script`/
+`Hook` and the `profiles:`/`scripts:`/`hooks:` manifest keys are deleted,
+not kept around behind a compatibility shim. There is no intermediate
+dual-schema state to support — every `devx.yaml` in this repo's
+`examples/` and any existing user manifests are rewritten to the new
+shape as part of landing this.
+
+1. `internal/config`: replace `Manifest`'s `Service`/`Dep`/`Script`/
+   `Hook` fields with `Vars map[string]string`, `Includes
+   map[string]string`, and `Tasks map[string]Task` (every other top-level
+   key), where `Task` unmarshals from either a YAML scalar (shorthand) or
+   a mapping via a custom `UnmarshalYAML`. Delete the old types and
+   `internal/config/validate.go`'s bespoke validation for them outright.
 2. `internal/task`: `Task`, `Driver`/`Handle`, `ReadyCheck`, the port
    sniffer (parses `-p`/`--port` out of `run:`, or reads `port:`) feeding
    readiness + detached inference, and the scheduler wrapping
    `internal/graph.TopoSort`.
 3. `processDriver` wrapping `internal/process.Supervisor` (near-zero
-   behavior change) + `commandDriver` for one-shot tasks. Ship as one PR —
-   delivers dependency-graph-aware `scripts:` (today's biggest concrete
-   gap) standalone.
-4. Migrate `Service`/`Dep`/`Script`/`Hook` onto the new `Task` model one
-   profile/kind at a time; delete the old types and their bespoke
-   validation (`internal/config/validate.go:90-114`) once callers migrate.
-5. Migrate `cmd_up.go`/`cmd_status.go`/`cmd_logs.go`/`cmd_exec.go`/
-   `cmd_down.go` onto the unified scheduler; retire the separate
-   sequential process-start path in `cmd/devx/process.go` and the
-   K8s-only `runUpK8s` path.
-6. Collapse common dep kinds (postgres/redis/etc.) into default
-   `run:`/`ready:` templates generated by devx itself; keep
-   `internal/providers`'s external fetch mechanism only for
-   externally-sourced/long-tail kinds, clearly labeled as the non-default
-   path.
-7. `devx --help`/`devx tasks`/`devx tasks --json`: generate task listing
+   behavior change) + `commandDriver` for one-shot tasks, including the
+   one-shot-vs-detached blocking distinction noted on `Driver.Start`
+   above.
+4. Rewrite `cmd_up.go`/`cmd_status.go`/`cmd_logs.go`/`cmd_exec.go`/
+   `cmd_down.go` onto the unified scheduler; delete the separate
+   sequential process-start path in `cmd/devx/process.go`, the K8s-only
+   `runUpK8s` path, and `internal/providers`'s compose-shaped provider
+   data — common dep kinds (postgres/redis/etc.) become default
+   `run:`/`ready:` templates devx ships itself.
+5. `devx --help`/`devx tasks`/`devx tasks --json`: generate task listing
    (name, `desc:` or truncated `run:`, `group:` section headers, `deps:`/
    `ready:` annotations) directly from the parsed `Manifest`, replacing the
    static subcommand-only help text for the task-listing portion.
-8. Scheduler: parallel execution of independent graph branches by default
+6. Scheduler: parallel execution of independent graph branches by default
    (Make's `-j` behavior, not opt-in); `--dry-run` (print resolved graph +
    substituted commands) and `--keep-going` flags on `up`/`run`; multi-
    target args (`devx up <name...>`, `devx run <name...>`) and `--group`
    selection reusing the `group:` field.
-9. `env:` (raw pass-through, resolved from inherited process environment
-   only — never literals) and `os:` (skip on non-matching platforms) as
-   task fields, enforced before dispatching to a `Driver`.
-10. `interactive: true` support in `processDriver`/`commandDriver`:
-    attach stdin/stdout/stderr directly instead of capturing for `logs`.
-11. `sources:`/`generates:` glob matching + mtime comparison, gating
-    whether `commandDriver`/`processDriver` actually runs a task's recipe
-    or reports "up to date."
+7. `env:` (raw pass-through, resolved from inherited process environment
+   only — never literals) and `os:` (skip on non-matching platforms, with
+   dependents treated as satisfied) as task fields, enforced before
+   dispatching to a `Driver`; validation rejects `interactive: true` or
+   `sources:`/`generates:` combined with `detached: true`.
+8. `interactive: true` support in `processDriver`/`commandDriver`:
+   attach stdin/stdout/stderr directly instead of capturing for `logs`.
+9. `sources:`/`generates:` glob matching + mtime comparison, gating
+   whether `commandDriver`/`processDriver` actually runs a task's recipe
+   or reports "up to date."
 
-Each step keeps `go build ./... && go test ./...` green and ships
-independently.
+Each step keeps `go build ./... && go test ./...` green; the full
+rewrite lands once all steps are done rather than being individually
+releasable (there's no old behavior left to fall back to mid-rewrite).
 
 ## Open questions
 
