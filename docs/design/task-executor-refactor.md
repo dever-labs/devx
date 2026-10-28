@@ -144,15 +144,22 @@ considered").
   the ecosystem already uses for this — Docker's own `-d`/`--detach`
   flag) rather than `background`/`service`, so it needs no definition.
   `detached:` is only written to override the inference.
-- **Variables**: `${VAR}` substitution resolved by devx (not shell
-  expansion, since it applies to non-shell fields like `ready.http` too).
-  Precedence mirrors Make, extended with `.env` for local-dev convenience
-  (same convention as Compose/foreman/direnv): CLI override (`devx up db
-  PORT=5555`) > inherited process environment > `.env`/`.env.local` in
-  the project root (loaded once at startup, never committed —
-  `.env.local` wins over `.env` if both exist) > `vars:` defaults. A
-  `.env` file is optional; nothing changes for a repo that doesn't have
-  one.
+- **Variables**: `${VAR}` (braced) substitution resolved by devx itself
+  (not shell expansion, since it applies to non-shell fields like
+  `ready.http` too). Precedence mirrors Make, extended with `.env` for
+  local-dev convenience (same convention as Compose/foreman/direnv): CLI
+  override (`devx up db PORT=5555`) > inherited process environment >
+  `.env`/`.env.local` in the project root (loaded once at startup, never
+  committed — `.env.local` wins over `.env` if both exist) > `vars:`
+  defaults. A `.env` file is optional; nothing changes for a repo that
+  doesn't have one. Unbraced `$VAR` is **not** touched by devx — it's
+  left as literal text for the embedded shell interpreter (or `shell:`
+  override) to resolve at actual exec time from the real subprocess
+  environment, which includes whatever `env:` set. This distinction
+  matters for secrets: a value that only ever needs to exist inside the
+  launched process (never in devx's own command-text buffer) should be
+  referenced as `$VAR`, not `${VAR}` — see `env:` below and "Secrets
+  never echo back" under "Reliability".
 - **Composition**: `includes: {name: path}` merges another `devx.yaml`'s
   tasks into **one** graph with namespaced task names (`infra:db`), not a
   recursive sub-process per file — see "Alternatives considered" for why
@@ -183,14 +190,22 @@ new abstractions:
   `crashed`/`restarting` from `running`/`ready` so both a human and an
   agent parsing `--json` output can tell "it's fine" from "it died and
   came back" from "it died and stayed dead."
-- **Secrets never echo back**: `${HOST_ENV_VAR}`-resolved `env:` values
-  must never appear in `--dry-run` output, `--json` output, or logs —
+- **Secrets never echo back**: `env:` values resolved from
+  `${HOST_ENV_VAR}` (braced, devx-substituted once at startup) must
+  never appear in `--dry-run` output, `--json` output, or logs —
   substituted commands shown by `--dry-run`/`devx tasks` render `env:`
-  entries as `KEY=<redacted>`, never the resolved value. This matters
-  more than it would for a human-only tool: both a human pasting terminal
-  output into chat/an issue and an agent echoing tool output verbatim (a
-  documented failure mode for AI coding tools generally) are realistic
-  leak paths, not hypothetical ones.
+  entries as `KEY=<redacted>`, never the resolved value. The companion
+  rule in "Variables" above is what actually makes this hold end to end:
+  a secret referenced inside `run:` (or any other string field) must use
+  unbraced `$VAR`, never braced `${VAR}` — braced references are
+  substituted by devx into its own command text (and so would appear in
+  `--dry-run`/`--json` regardless of where the value came from), while
+  unbraced references are left untouched for the subprocess's real
+  environment to supply at exec time. This matters more than it would
+  for a human-only tool: both a human pasting terminal output into
+  chat/an issue and an agent echoing tool output verbatim (a documented
+  failure mode for AI coding tools generally) are realistic leak paths,
+  not hypothetical ones.
 
 ### Additional optional fields (from Make / modern task runners)
 
@@ -206,13 +221,20 @@ out:
   `ready.http`; `env:` keys go straight into the subprocess's OS
   environment instead of a manifest field, which is where host-provided
   secrets belong (consistent with the repo's existing convention that
-  secrets are never written into `devx.yaml`). `${VAR}` substitution
-  still applies to `env:` *values* the same as any other string field —
-  `env: { DB_PASSWORD: ${HOST_DB_PASSWORD} }` resolves
+  secrets are never written into `devx.yaml`). Braced `${VAR}`
+  substitution still applies to `env:` *values* the same as any other
+  string field — `env: { DB_PASSWORD: ${HOST_DB_PASSWORD} }` resolves
   `${HOST_DB_PASSWORD}` from the inherited shell environment (never a
   literal secret in `devx.yaml`) before setting `DB_PASSWORD` in the
-  subprocess's environment. The distinction is the *destination*
-  (subprocess env vs. a manifest field), not whether substitution runs.
+  subprocess's environment. The distinction from `vars:` is the
+  *destination* (subprocess env vs. a manifest field), not whether
+  substitution runs on the right-hand side. But the resulting
+  `DB_PASSWORD` must only ever be *referenced* elsewhere (e.g. inside
+  `run:`) as unbraced `$DB_PASSWORD` — never `${DB_PASSWORD}` — or devx's
+  own substitution step would re-resolve it from the `vars:`-precedence
+  chain and bake the secret into the literal command text devx builds,
+  which is exactly what `--dry-run`/`--json` redaction can't see through
+  (see "Secrets never echo back" under "Reliability").
 - **`os: [linux, darwin, windows]`** — skip this task entirely (not an
   error) when the host OS isn't in the list. Relevant because devx already
   does cross-platform tool detection/`doctor`; some recipes (Homebrew
@@ -253,7 +275,11 @@ out:
 ```yaml
 # --- env: vs vars: ---
 db:
-  run: docker run --rm -d --name db -p ${PORT}:5432 -e POSTGRES_PASSWORD=${DB_PASSWORD} ${IMAGE}
+  # $DB_PASSWORD is unbraced on purpose: it's resolved by the shell from
+  # the subprocess's real environment at exec time (set by env: below),
+  # never by devx's own ${VAR} substitution — so it never appears in
+  # devx's own command text, and `--dry-run`/`--json` can't leak it.
+  run: docker run --rm -d --name db -p ${PORT}:5432 -e POSTGRES_PASSWORD=$DB_PASSWORD ${IMAGE}
   env:
     DB_PASSWORD: ${HOST_DB_PASSWORD}   # pulled from the inherited shell env, never written literally
 
@@ -467,6 +493,7 @@ test: go test ./...
 smoke:
   desc: One-shot smoke test against the running stack
   deps: [web:app]              # still ad hoc: nothing depends ON smoke
+  timeout: 30s                 # never let a hung request block CI/an agent forever
   run: ./scripts/smoke-test.sh
 
 build:
@@ -489,7 +516,9 @@ psql:
 # ---- services: part of `devx up`, fully inferred (bare string, zero config) ----
 db:
   desc: Postgres for local dev
-  run: docker run --rm -d --name db -p ${PORT}:5432 -e POSTGRES_PASSWORD=${DB_PASSWORD} ${IMAGE}
+  # $DB_PASSWORD unbraced — resolved by the shell from the subprocess's
+  # real env (set by env: below), never by devx's own ${VAR} substitution.
+  run: docker run --rm -d --name db -p ${PORT}:5432 -e POSTGRES_PASSWORD=$DB_PASSWORD ${IMAGE}
   env:
     DB_PASSWORD: ${HOST_DB_PASSWORD}   # from the inherited shell env, never a literal in devx.yaml
 
@@ -515,6 +544,7 @@ migrate:
   group: Data
   desc: Apply DB migrations
   deps: [db]
+  timeout: 1m                  # migrations hanging against a half-started db
   run: ./scripts/migrate.sh up
 
 seed:
@@ -528,6 +558,9 @@ api:
   group: Services
   desc: Backend API
   deps: [migrate, infra:minio]
+  sources: ["api/**/*.go"]     # `devx up --watch` / `devx run api --watch`
+                                # rebuilds + restarts api on a source change
+  restart: on-failure          # crash-loop during a bad rebuild shouldn't kill `up`
   run: ./bin/api --port 9000
   ready: { http: localhost:9000/status }
 ```
@@ -584,6 +617,9 @@ devx up --keep-going           # if `redis` fails to start, `db`/`queue`/
                                 # `api` still proceed; only redis's branch stops
 devx run build                 # skip, printing "up to date", if ./bin/devx
                                 # is newer than every cmd/**/*.go + go.sum
+devx run api --watch           # rebuild+restart api whenever api/**/*.go changes
+devx up --watch                # same, applied to every sources:-bearing task
+                                # in the closure (here: just api)
 devx run psql                  # attaches the terminal directly (interactive: true)
 devx run install-tools         # no-op on Linux/CI (os: [darwin]), runs on macOS
 devx tasks --json               # structured list for tools/agents
@@ -840,10 +876,13 @@ releasable (there's no old behavior left to fall back to mid-rewrite).
    conventions, but will miss custom launchers. Silent fallback to "no
    readiness check" for those, or should `devx validate` warn ("`web`
    looks long-running but no port was detected — add `ready:` explicitly")?
-2. `${VAR}` substitution applies to specific fields (`run`, `ready.http`,
-   `ready.tcp`, etc.) rather than the whole document — which fields need
-   it enumerated, and is plain string replacement sufficient, or do we
-   need escaping for a literal `$` inside a recipe?
+2. Braced `${VAR}` substitution (resolved by devx) applies to specific
+   fields (`run`, `ready.http`, `ready.tcp`, etc.) rather than the whole
+   document, and unbraced `$VAR` is left for the shell to resolve at exec
+   time (see "Variables" and "Secrets never echo back") — which fields
+   need the braced form enumerated, and is plain string replacement
+   sufficient, or do we need escaping for a literal `${` inside a recipe
+   that isn't meant as a devx variable at all?
 3. Version/surface coupling (CLI-shelling vs SDKs, pinned minimum
    versions) — own design doc once this lands, or folded into the
    implementation plan per `Driver` as each backend is built?
