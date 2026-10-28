@@ -88,3 +88,38 @@ func TestStopTimeoutFor(t *testing.T) {
 		}
 	}
 }
+
+func TestReverseDependencyOrder_DependentsBeforeDependencies(t *testing.T) {
+	m := &config.Manifest{Tasks: map[string]config.Task{
+		"db":  {Name: "db", Run: "echo db"},
+		"api": {Name: "api", Run: "echo api", Deps: []string{"db"}},
+		"web": {Name: "web", Run: "echo web", Deps: []string{"api"}},
+	}}
+	order, err := reverseDependencyOrder(m)
+	if err != nil {
+		t.Fatalf("reverseDependencyOrder failed: %v", err)
+	}
+	if len(order) != 3 {
+		t.Fatalf("expected 3 tasks, got %v", order)
+	}
+	pos := map[string]int{}
+	for i, n := range order {
+		pos[n] = i
+	}
+	if pos["web"] > pos["api"] {
+		t.Errorf("expected web (dependent) to stop before api (dependency), got order %v", order)
+	}
+	if pos["api"] > pos["db"] {
+		t.Errorf("expected api (dependent) to stop before db (dependency), got order %v", order)
+	}
+}
+
+func TestReverseDependencyOrder_CycleReturnsError(t *testing.T) {
+	m := &config.Manifest{Tasks: map[string]config.Task{
+		"a": {Name: "a", Run: "echo a", Deps: []string{"b"}},
+		"b": {Name: "b", Run: "echo b", Deps: []string{"a"}},
+	}}
+	if _, err := reverseDependencyOrder(m); err == nil {
+		t.Fatal("expected an error for a cyclic dependency graph")
+	}
+}
