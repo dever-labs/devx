@@ -112,7 +112,9 @@ every matched `sources:` file — see "Incremental skip" below), `port:
 "Inference" below), `timeout: <duration>` (optional, hard ceiling on a
 one-shot recipe or a readiness wait — see "Reliability" below), `restart:
 never|on-failure|always` (optional, only for `detached: true` tasks —
-see "Reliability" below). No `driver:`/`with:` field — `run:` is plain
+see "Reliability" below), `shell: bash|sh|cmd|powershell|pwsh|<path>`
+(optional, opt out of the embedded shell interpreter for this task — see
+"`run:` execution" below). No `driver:`/`with:` field — `run:` is plain
 shell, technology-neutral by construction. No before/after hooks —
 `deps:` is the only ordering primitive; there is no separate "runs after,
 without being a declared prerequisite" concept (see "Alternatives
@@ -159,7 +161,14 @@ considered").
   matters for secrets: a value that only ever needs to exist inside the
   launched process (never in devx's own command-text buffer) should be
   referenced as `$VAR`, not `${VAR}` — see `env:` below and "Secrets
-  never echo back" under "Reliability".
+  never echo back" under "Reliability". **Caveat:** `$VAR` is POSIX
+  shell syntax, understood by the embedded interpreter and by `shell:
+  bash|sh`. A task that also sets `shell: cmd` or `shell: powershell`/
+  `pwsh` won't resolve `$VAR` at all (`cmd` needs `%VAR%`, PowerShell
+  needs `$env:VAR`) — the literal text would reach the external command
+  unexpanded instead of silently leaking, but it does mean the
+  unbraced-`$VAR` convention is tied to the default/POSIX `shell:`
+  values, not universal across every `shell:` option.
 - **Composition**: `includes: {name: path}` merges another `devx.yaml`'s
   tasks into **one** graph with namespaced task names (`infra:db`), not a
   recursive sub-process per file — see "Alternatives considered" for why
@@ -452,7 +461,7 @@ surfaced:
 | `devx down` | Unchanged — stops every running detached task in reverse dependency order. |
 | `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`, `timeout`, `restart`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. `env:` values shown redacted, same as `--dry-run`. |
 | `devx --help` / `devx run <name> --help` / `devx <name> --help` | Generated from the manifest, Cobra-style — see "`devx --help` follows standard CLI conventions" above. |
-| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness), plus a task name colliding with a built-in command, plus `restart:`/`timeout:` set on a non-`detached`/non-one-shot task respectively, surface here as warnings, not errors. |
+| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness), plus a task name colliding with a built-in command, plus `restart:` set on a non-`detached` task (meaningless — nothing to restart), surface here as warnings, not errors. `timeout:` has no such check: it's valid on both one-shot recipes and detached tasks' `ready:` waits, so there's no task shape it's ever a mistake on. |
 
 `--watch` (either form) is **restart-only** — stop, re-run the recipe,
 wait for ready again — not file-sync-into-a-running-container the way
@@ -703,8 +712,11 @@ legacy-migrate:
   desc: Needs real bash for an existing script with bash-only array tricks
   shell: bash          # exec /usr/bin/env bash -c "<run>" instead of the
                         # embedded interpreter; also accepts sh/cmd/
-                        # powershell/pwsh, or a custom path to any shell
-                        # binary accepting -c/<run>
+                        # powershell/pwsh (each invoked with its own
+                        # native "run a string" flag — `-c` for bash/sh,
+                        # `/C` for cmd, `-Command` for powershell/pwsh),
+                        # or a custom path to any other shell binary
+                        # paired with its own such flag
   run: ./scripts/legacy-migrate.sh
 ```
 
@@ -838,9 +850,11 @@ shape as part of landing this.
    substituted commands) and `--keep-going` flags on `up`/`run`; multi-
    target args (`devx up <name...>`, `devx run <name...>`) and `--group`
    selection reusing the `group:` field.
-7. `env:` (raw pass-through, resolved from inherited process environment
-   only — never literals) and `os:` (skip on non-matching platforms, with
-   dependents treated as satisfied) as task fields, enforced before
+7. `env:` (raw pass-through to the subprocess, values resolved via the
+   same `${VAR}`-substitution precedence chain as `vars:` — CLI override
+   > inherited env > `.env`/`.env.local` > `vars:` defaults — never
+   written as literal secrets) and `os:` (skip on non-matching platforms,
+   with dependents treated as satisfied) as task fields, enforced before
    dispatching to a `Driver`; validation rejects `interactive: true` or
    `sources:`/`generates:` combined with `detached: true`.
 8. `interactive: true` support in `processDriver`/`commandDriver`:
