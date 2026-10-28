@@ -563,6 +563,8 @@ surfaced:
 | `devx up --workspace <id>` | **New.** See "Parallel-issue workflows" above. Namespaces container/network/volume names and non-pinned ports with `<id>`, so multiple `devx up` invocations against different `git worktree`s of the same manifest (e.g. one per issue, attached to the same shared devcontainer) can run concurrently without colliding. Defaults to a value derived from the current `git worktree` path when omitted; `scope: shared` tasks are deduplicated across workspaces rather than started once per workspace. |
 | `devx workspace list` / `devx workspace rm <id>` | **New.** `list` shows every active workspace id and its tasks (grouped, mirrors `devx ps --all-workspaces` below). `rm <id>` tears down that workspace's containers/volumes and frees its ports; `scope: shared` tasks are only stopped if no other workspace still references them. |
 | `devx ps --all-workspaces` | **New.** Same as `devx status`'s running-task view, but across every active workspace at once instead of just the current one — for checking what's running across issues without switching windows. |
+| `devx workspace new <id> [--agent <name>]` | **New.** Create a `git worktree` for `<id>`, run `devx up --workspace <id>` in it, then attach interactively to the named `agents:` entry (or the sole one) — one command to start working on an issue. |
+| `devx workspace agent <id> [<name>]` | **New.** Attach interactively to an `agents:` entry, cwd'd into workspace `<id>`'s worktree with that workspace's env resolution — for re-attaching in a new terminal/window without recreating the stack. |
 | `devx up --watch` | **New.** After the stack is up, watches every task in the resolved closure that has `sources:` set and restarts it (stop, re-run recipe, wait for ready again for `detached:` tasks; just re-run for one-shot `deps:` of a detached task, e.g. `migrate`) on change — the whole-stack version of `devx run <name> --watch` below, applied automatically across the graph instead of needing one `--watch` per service in separate terminals. Mirrors `docker compose up --watch`/`docker compose watch`. A rebuild failure on one task is reported inline and leaves the rest of the stack running (per-task isolation) rather than stopping the whole `--watch` session. |
 | `devx run <name...>` | Run one-shot task(s) to completion, in the order given, respecting `deps:`. Multi-target, like `devx up <name...>`. |
 | `devx run <name> --dry-run` | Same dry-run semantics as `up`. |
@@ -943,6 +945,45 @@ convenience, not isolation between adversarial or untrusted work — make
 that limitation explicit in `devx --help`/docs rather than implying more
 safety than it provides.
 
+#### Launching AI coding tools per workspace
+
+Creating the worktree and standing up the stack is only half of "start
+working on this issue" — the other half is getting an AI coding tool
+(Copilot CLI, Claude Code, Codex CLI, aider, ...) running against it too.
+Consistent with "don't abstract the technology away": devx doesn't learn
+anything about any specific agent, it just makes "run this command,
+scoped to this workspace" a one-liner, the same way `run:` is a plain
+shell command for every other task.
+
+- A new `agents: {name: <shell command>}` manifest field (optional, root
+  level, alongside `vars:`), e.g.:
+  ```yaml
+  agents:
+    copilot: copilot
+    claude: claude --dangerously-skip-permissions
+  ```
+  Each value is opaque shell text, same spirit as `run:` — devx never
+  parses or special-cases a particular tool's flags.
+- `devx workspace agent <id> [<name>]` — launches the named agent (or
+  the single entry, if `agents:` only has one) **interactively**
+  (stdin/stdout passed straight through, same as `interactive: true`
+  tasks — these are REPLs, not captured-output recipes), with cwd set to
+  that workspace's worktree and the same env resolution any task gets
+  (`.env`/`vars:`/process env), so the agent sees the same DB URLs etc.
+  the stack it's working against uses. No new execution primitive —
+  reuses the existing embedded-shell/interactive-passthrough path.
+- `devx workspace new <id> [--agent <name>]` — the actual "one command
+  to start an issue": creates the `git worktree`, runs `devx up
+  --workspace <id>`, then drops straight into the named agent. Chains
+  the two steps above so starting work on a new issue (worktree + stack
+  + agent) is one command instead of three.
+- Credentials/auth (API keys, OAuth tokens an agent CLI stores under
+  `$HOME`) are fine to share across workspaces in Tier 1 — same
+  container, same account, no isolation needed there. Per-workspace
+  conversation/session state (whatever an agent persists under its own
+  cwd, e.g. a `.copilot/`/`.claude/` directory) is already isolated for
+  free, since cwd is the worktree and worktrees don't share files.
+
 ### Tier 2 (already possible today, no devx change): per-worktree devcontainer
 
 For issues that need real process/network isolation but should stay
@@ -1044,10 +1085,12 @@ shape as part of landing this.
 
 1. `internal/config`: replace `Manifest`'s `Service`/`Dep`/`Script`/
    `Hook` fields with `Vars map[string]string`, `Includes
-   map[string]string`, and `Tasks map[string]Task` (every other top-level
-   key), where `Task` unmarshals from either a YAML scalar (shorthand) or
-   a mapping via a custom `UnmarshalYAML`. Delete the old types and
-   `internal/config/validate.go`'s bespoke validation for them outright.
+   map[string]string`, `Agents map[string]string` (optional, see
+   "Launching AI coding tools per workspace"), and `Tasks map[string]Task`
+   (every other top-level key), where `Task` unmarshals from either a
+   YAML scalar (shorthand) or a mapping via a custom `UnmarshalYAML`.
+   Delete the old types and `internal/config/validate.go`'s bespoke
+   validation for them outright.
 2. `internal/task`: `Task`, `Driver`/`Handle`, `ReadyCheck`, the port
    sniffer (parses `-p`/`--port` out of `run:`, or reads `port:`) feeding
    readiness + detached inference, and the scheduler wrapping
@@ -1144,6 +1187,14 @@ shape as part of landing this.
     `devx workspace rm <id>` only tears one down once nothing else
     references it; `devx workspace list`/`rm` and `devx ps
     --all-workspaces` as new `cmd_*.go` entrypoints.
+17. **`agents:` map + agent attach** (see "Launching AI coding tools per
+    workspace"): `devx workspace agent <id> [<name>]` resolves cwd to
+    that workspace's worktree, resolves env the same way a task does,
+    then execs the named `agents:` command with stdin/stdout/stderr
+    passed straight through (reusing the `interactive: true` code path,
+    not a new one); `devx workspace new <id> [--agent <name>]` chains
+    `git worktree add` + `devx up --workspace <id>` + the above into one
+    command.
 
 Each step keeps `go build ./... && go test ./...` green; the full
 rewrite lands once all steps are done rather than being individually
