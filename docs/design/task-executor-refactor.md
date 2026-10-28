@@ -189,6 +189,13 @@ out:
   either field is a validation error, since a supervised long-running
   process has no single "run to completion" point to compare timestamps
   against.
+- **`shell: bash|sh|cmd|powershell|pwsh|<path>`** — opt out of the
+  embedded cross-platform shell interpreter (see "Internal architecture")
+  for a specific task, exec'ing a real installed shell binary instead.
+  Needed only for recipes relying on shell features the embedded
+  interpreter doesn't cover (advanced Bash extensions, a pre-existing
+  `.sh`/`.ps1` script that assumes a real shell). Unset (the default)
+  means every task gets the embedded interpreter.
 
 ```yaml
 # --- env: vs vars: ---
@@ -216,7 +223,14 @@ build:
   sources: ["cmd/**/*.go", "internal/**/*.go", "go.sum"]
   generates: ["./bin/devx"]
   run: go build -o ./bin/devx ./cmd/devx
+
+# --- shell: (opt out of the embedded interpreter) ---
+legacy-migrate:
+  desc: Pre-existing bash script using array tricks the embedded shell can't parse
+  shell: bash
+  run: ./scripts/legacy-migrate.sh
 ```
+
 
 ### `devx --help` reflects the manifest, not a hardcoded list
 
@@ -444,6 +458,7 @@ type Task struct {
     Interactive bool
     Sources     []string // glob patterns
     Generates   []string // glob patterns
+    Shell       string   // "" (default, embedded) | "bash" | "sh" | "cmd" | "powershell" | "pwsh" | a custom path
 }
 
 type ReadyCheck struct {
@@ -467,7 +482,50 @@ var Drivers = map[string]Driver{
 type Driver interface {
     Start(ctx context.Context, t Task) (Handle, error)
 }
+```
 
+### `run:` execution: embedded shell by default, real shell as an opt-out
+
+`run:` text is interpreted by an **embedded**, pure-Go POSIX/Bash-subset
+shell ([`mvdan.cc/sh`](https://github.com/mvdan/sh) — also what `go-task`
+uses for the same reason) rather than exec'd via `/bin/sh -c` or
+`cmd /C`/PowerShell, by default. This is a `commandDriver`/`processDriver`
+execution detail, not a manifest concern — `run:` is still plain shell
+text to the author either way:
+
+- No dependency on whatever shell happens to be installed/on `PATH` —
+  `rm -rf dist && cp -r src dist` behaves identically on Linux, macOS, and
+  Windows, including common coreutils-style builtins (`cp`, `rm`, `mkdir`,
+  `mv`, ...) implemented in Go rather than shelled out to external
+  binaries.
+- One grammar devx controls, instead of three (`bash`/`cmd`/`powershell`)
+  silently diverging between platforms.
+- External programs (`docker`, `kubectl`, `brew`, ...) are unaffected —
+  only the shell *glue* (pipes, `&&`, redirects, `if`/`for`) runs
+  in-process; anything that isn't a builtin still execs normally via
+  `PATH`.
+
+It isn't 100% bash-compatible (no real process forking/job control inside
+the interpreter, some advanced Bash extensions unsupported), so an
+escape hatch exists for recipes that genuinely need a real installed
+shell — an optional **`shell:`** field, same shape as `os:` (an override,
+never required):
+
+```yaml
+legacy-migrate:
+  desc: Needs real bash for an existing script with bash-only array tricks
+  shell: bash          # exec /usr/bin/env bash -c "<run>" instead of the
+                        # embedded interpreter; also accepts sh/cmd/
+                        # powershell/pwsh, or a custom path to any shell
+                        # binary accepting -c/<run>
+  run: ./scripts/legacy-migrate.sh
+```
+
+`shell:` unset (the common case) means the embedded interpreter;
+set means devx execs that real shell binary with the recipe instead,
+exactly like today's behavior.
+
+```go
 type Handle interface {
     Status() (string, error)
     Stop() error
@@ -573,7 +631,9 @@ shape as part of landing this.
 3. `processDriver` wrapping `internal/process.Supervisor` (near-zero
    behavior change) + `commandDriver` for one-shot tasks, including the
    one-shot-vs-detached blocking distinction noted on `Driver.Start`
-   above.
+   above. Both execute `run:` via an embedded `mvdan.cc/sh` interpreter
+   by default, exec'ing the real `shell:`-named binary instead when that
+   field is set.
 4. Rewrite `cmd_up.go`/`cmd_status.go`/`cmd_logs.go`/`cmd_exec.go`/
    `cmd_down.go` onto the unified scheduler; delete the separate
    sequential process-start path in `cmd/devx/process.go`, the K8s-only
