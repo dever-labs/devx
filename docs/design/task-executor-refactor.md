@@ -13,16 +13,18 @@ any code changes.
 > still hold.
 >
 > **Revision 3** — Revision 2 fixed *architectural* coupling (one driver =
-> one file) but still invented a new YAML schema (`driver:`/`with:`) that
-> devs (and the AI assistants writing these manifests) have to learn, when
-> they already fluently write Makefiles. Revision 3 drops the custom YAML
-> task schema entirely in favor of **real GNU Make syntax** as the authoring
-> surface, with devx adding only the handful of things Make genuinely can't
-> express, as inert comment pragmas. See "Revision 3: stop inventing a DSL —
-> build on real Makefiles" at the end. It supersedes the `tasks:`/`driver:`/
-> `with:` manifest surface proposed in Revision 2; Revision 2's `Driver`/
-> `Handle` interface split and the two-axes-of-coupling framing still hold
-> as the *internal* (Go-side) architecture.
+> one file) but still invented a new YAML schema (`tasks:`/`driver:`/
+> `with:`) that's its own thing to learn. An earlier draft of this revision
+> went as far as proposing devx parse/execute real `.mk` Makefile syntax
+> directly — that was explored, built, and rejected: `devx.yaml` stays
+> `devx.yaml`, a plain YAML file. What Revision 3 actually keeps from the
+> Make research is the *philosophy* (flat namespace, deps + a shell recipe,
+> infer rather than require config, convention-based defaults with explicit
+> override) applied to a much leaner `devx.yaml` shape. See "Revision 3:
+> a leaner devx.yaml, not a new file format" at the end — it supersedes the
+> `tasks:`/`driver:`/`with:` manifest surface proposed in Revision 2;
+> Revision 2's `Driver`/`Handle` interface split and the two-axes-of-coupling
+> framing still hold as the *internal* (Go-side) architecture.
 
 ## Problem
 
@@ -449,178 +451,122 @@ independently.
 
 ---
 
-## Revision 3: stop inventing a DSL — build on real Makefiles
+## Revision 3: a leaner devx.yaml, not a new file format
 
-### Why Revision 2 still didn't land
+### Course correction
 
-Revision 2 fixed *architectural* coupling: adding a technology became "one
-new `Driver` implementation" instead of "touch every exhaustive switch."
-But it kept inventing schema — `tasks:`, `driver:`, `with: map[string]any`,
-`transient:` — that nobody needed to learn before, and that stops being a
-duck-typed config bag only if we also hand-roll a `$schema`-per-driver
-validation story (open question #1, still unresolved). Net effect: smaller
-blast radius per change, but still a bespoke YAML dialect competing with a
-tool (Make) that already does 80% of this, that the project team already
-reaches for, and that AI assistants already write fluently with zero
-prompting.
+A draft of this revision proposed that devx literally parse and execute
+real `.mk` Makefile syntax (pragmas-in-comments, `include`, tabs, the lot).
+That was built as a working proof of concept and explicitly rejected: the
+target was never "stop using `devx.yaml`" — it's "our `devx.yaml` is too
+complex." Make stays a research input (its philosophy), not a dependency or
+a file format devx parses.
 
-Two follow-up questions from review sharpened this further:
+### What carries over from the Make research
 
-1. **"Aren't we still coupling to technologies via the driver, just one
-   level down?"** Yes — drivers still shell out to `docker compose`/
-   `kubectl` CLIs (confirmed in `internal/runtime/docker/docker.go` and
-   `internal/k8s/kubectl.go`). That's a *second*, independent axis of
-   coupling Revision 2 doesn't address:
-   - **Architectural coupling** (how many files/how far per-tech knowledge
-     spreads) — fixed by the `Driver` split.
-   - **Version/surface coupling** (fragility of one external tool's CLI
-     flags/output format drifting between versions) — NOT fixed by
-     `Driver` alone. Mitigations, independent of the schema question:
-     prefer official client SDKs (`client-go`, Docker's Go SDK) over
-     CLI-shelling + text-parsing; target the open Compose Specification via
-     `compose-spec/compose-go` instead of the `docker` binary;
-     capability-probe instead of version-assume; pin minimum supported
-     versions and contract-test them in CI.
-2. **"AI makes writing a Makefile easy — an abstraction layer over the
-   technology is a waste of time."** Correct, and the sharper framing of
-   the whole redesign: devx's job was never "hide Docker/K8s behind a nicer
-   syntax" — recipes (`docker run ...`, `kubectl apply ...`) are already
-   trivial to write and should stay plain shell. devx's job is the small set
-   of things *about running a dev environment* that Make has no concept of
-   at all: is this thing actually ready (not just "did the command exit
-   0"), supervising something long-running without blocking the shell, and
-   giving a unified `status`/`logs`/`down` across whatever mix of
-   containers/processes/k8s a repo happens to use.
+- **One flat namespace**, no wrapper key. Every task name is a top-level
+  key directly in `devx.yaml` — not nested under `tasks:`/`profiles:`/
+  `services:`. (`vars:` and `includes:` are the only other reserved
+  top-level keys.)
+- **A task is a shell recipe + deps**, nothing else required. `Service`/
+  `Dep`/`Script`/`Hook` collapse into one shape.
+- **Shorthand for the common case**: a task can be a bare string (just the
+  command — no deps, no ready, no detached) exactly like Make's "recipe
+  with no prerequisites." The full object form is only needed when a task
+  has dependencies or needs a readiness/detached override.
+- **Infer, don't require** — config fields exist only to *override* a
+  sensible convention-based default, not to be filled in by hand for every
+  task. Applied here to the two fields that kept creeping back in:
+  - **Readiness**: if a task's `run:` exposes a port (parsed from `-p`/
+    `--port`, or an explicit `port:` field), default `ready` to an HTTP GET
+    on `http://localhost:<port>/healthz` with short retry/timeout; if that
+    gets an outright connection refusal (no HTTP server there at all), fall
+    back to a plain TCP connect on the same port; no known port → ready
+    immediately. No Docker-specific healthcheck coupling — this works
+    identically whether `run:` launches a container or a bare process.
+    `ready:` is only written to override the inferred default (non-standard
+    path, or a `cmd:` check).
+  - **Detached vs one-shot**: if a task has a port or a `ready:`, it's
+    almost certainly long-running, so default `detached: true`; otherwise
+    default `detached: false` (run to completion, block on exit code).
+    `detached:` is only written to override that inference. Named
+    `detached` (not `background`/`service`) to match the term the ecosystem
+    already uses for exactly this (Docker's own `-d`/`--detach` flag) —
+    unambiguous without needing a definition.
+- **Variables**: top-level `vars:` block, `${VAR}` substitution resolved by
+  devx itself (not shell-expanded, since not every field is a shell
+  string). Precedence mirrors Make exactly: CLI override
+  (`devx up db PORT=5555`) > inherited process environment > `vars:`
+  defaults.
 
-### What's good about Make, concretely (research)
+### Shape
 
-- **One model for everything**: `target: prerequisites` + a shell `recipe`.
-  No "kind" field, no union type — category (build-artifact vs always-run
-  action) is inferred from behavior (`.PHONY`), not a different schema.
-  Directly contradicts today's devx reality, where "where/how does this run"
-  is encoded three incompatible ways (`Service.Kind`, `Hook.Exec`/`Run`,
-  `Script.Container` auto/true/false) — see `internal/config/manifest.go`
-  and `internal/config/validate.go:90-114`.
-- **Automatic variables** (`$@`, `$<`, `$^`) and variable flavors (`=`
-  recursive, `:=` immediate, `?=` default-if-unset, `+=` append) with a
-  well-known precedence: CLI override (`make target VAR=val`) > inherited
-  shell environment > Makefile defaults. Nothing to design — it's already
-  the mental model most engineers (and CI configs) already use daily.
-- **`include`** splices files flatly (no namespacing — a real limitation:
-  name collisions are the includer's problem). **Recursive `$(MAKE) -C
-  dir`** per sub-project is the traditional alternative, but ["Recursive
-  Make Considered Harmful"](https://aegis.sourceforge.net/auug97.pdf)
-  (Miller, 1997) shows it's broken: each sub-make has its own separate
-  dependency graph, so a target in one submake can't correctly depend on a
-  target in another, and `-j` parallelism can't cross the boundary. Modern
-  tools (go-task's `includes:`) fix this by merging multiple files into
-  **one** unified graph with namespaced task IDs instead of spawning
-  sub-processes — the model devx should copy for `include`.
-- **Self-documenting `help`**: the `##@ Section` + `## description` comment
-  convention + one `awk` one-liner (seen verbatim in
-  [`dever-labs/homelab`'s `Makefile`](https://github.com/dever-labs/homelab/blob/main/Makefile))
-  turns a flat target list into grouped, discoverable `make help` output for
-  free — comments as documentation, not as parsed config.
-- That same homelab `Makefile` is also evidence for the "stop abstracting
-  the technology" point directly: every target is a one-line dispatch to
-  `scripts/minas.sh <subcommand>`; all real logic lives in one script, the
-  Makefile is purely a thin, discoverable command list. It does not use
-  `deps:`/prerequisites at all — confirming devx's distinct value-add is
-  specifically the service-lifecycle case (`up`/readiness/background), not
-  "yet another command runner" (Make/the homelab pattern already nails
-  that part on its own).
+```yaml
+vars:
+  PORT: 5432
+  IMAGE: postgres:16
 
-### Proposal: devx reads real Makefiles, adds three pragmas
+lint: golangci-lint run
+test: go test ./...
 
-Primary authoring surface becomes a real `Makefile` (or an included
-`devx.mk`), parsed with Make's own grammar — devx does not define a new
-file format. On top of the ordinary target/prerequisite/recipe/variable/
-`include` model, devx recognizes a small, fixed set of `# devx:` comment
-lines **inside a target's own recipe** (never attached to some other
-target) for the things Make cannot express:
+db:
+  run: docker run --rm -d --name db -p ${PORT}:5432 ${IMAGE}
+  # no ready:/detached: written — inferred: port 5432 known, no HTTP ->
+  # TCP ready check; port known -> detached: true
 
-```makefile
-PORT  ?= 5432
-IMAGE ?= postgres:16
+web:
+  run: docker run --rm -d -p 8080:8080 myapp
+  # inferred: port 8080 known, HTTP responds -> GET /healthz; detached: true
 
-include web/devx.mk   # merged into ONE graph, namespaced (web:test, …)
+api:
+  run: ./bin/api --port 9000
+  ready: { http: localhost:9000/status }   # override: non-standard path
 
-.PHONY: help
-.DEFAULT_GOAL := help
-
-help: ## Show available tasks
-	@awk 'BEGIN {FS = ":.*## "} /^##@/ {printf "\n%s\n", substr($$0,5)} \
-	  /^[a-zA-Z0-9_-]+:.*## /{printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-##@ Services
-db: ## Postgres ($(IMAGE) on :$(PORT))
-	# devx:background
-	# devx:ready tcp:localhost:$(PORT)
-	docker run --rm -d --name db -p $(PORT):5432 $(IMAGE)
-
-migrate: db ## Apply DB migrations
-	./scripts/migrate.sh up
+migrate:
+  deps: [db]
+  run: ./scripts/migrate.sh up
+  # inferred: no port -> no ready check; no port/ready -> detached: false
 ```
 
-Recognized pragmas (deliberately minimal — this is the entire new surface):
-
-- `# devx:background` — start detached/supervised instead of blocking;
-  `devx up` runs it async, `devx down` stops it, `devx logs <target>` tails
-  captured output. Internally this is `processdriver` from Revision 2,
-  unchanged — only how it's declared changes.
-- `# devx:ready <tcp:host:port | http:url | cmd:...>` — backend-neutral
-  readiness gate before dependents proceed; maps directly onto Revision 2's
-  `ReadyCheck{HTTP, TCP, Command}`.
-- Nothing else. **Before/after hooks were proposed and explicitly
-  rejected** — ordinary prerequisites (`migrate: db`) already express "run
-  before"; there is no separate "after" pragma. If something needs to run
-  once a service is up without being a prerequisite anyone declares, that's
-  just another target a human or `devx up` invokes explicitly — not a
-  feature devx needs to own.
-
-Because pragmas are plain `#` comments inside a tab-indented recipe line,
-they're inert shell comments to `make` itself — verified by running a
-trimmed version of the example above with plain `make -f devx.mk db`: the
-pragma lines print as literal shell comments, then `docker run` executes
-normally. **devx is a strict superset of Make** — the same file works with
-zero devx installed, and `devx up`/`status`/`logs`/`down` add readiness/
-supervision/unified-visibility on top by reading the same pragmas.
+This is the entire schema: `vars:` (map), `includes:` (map, namespaced,
+merged into one graph — see Revision 2's note on avoiding the
+recursive-make trap), and any other top-level key is a task — either a bare
+string or `{deps, run, ready, detached}`.
 
 ### What this changes in the codebase
 
-- `internal/config`: gains a Make parser (or a thin wrapper around
-  `compose-spec`-style parsing — likely a small from-scratch parser, since
-  GNU Make's grammar for `target`/`prereqs`/tab-recipe/`include`/variable
-  flavors is compact) instead of extending `Manifest`/`Service`/`Dep`/
-  `Script`/`Hook`. `devx.yaml` is not removed — it still owns `tools:`,
-  `setup:`, `envFiles:`, and profile/runtime selection, none of which is a
-  task-graph concept.
-- `internal/graph`: unchanged — Make's own prerequisite list *is* the
-  `dependsOn` edge list; `TopoSort` still drives execution order.
-  `include` targets get namespaced node names (`web:test`) merged into the
-  same graph, not a separate `TopoSort` call per file.
-- Revision 2's `Driver`/`Handle` interface split, `ReadyCheck`, and the
-  "common dep kinds become in-binary driver defaults" point all still hold
-  as the internal execution model — only the authoring surface (Make
-  pragmas vs `driver:`/`with:` YAML) changed.
-- `Service`/`Dep`/`Script`/`Hook` and their three incompatible "where does
-  this run" mechanisms (`Kind`, `Exec`/`Run`, `Container` auto-detection)
-  are retired together, replaced by: a Make target is a task; `# devx:
-  background` is the only "runs detached" signal needed.
+- `internal/config`: `Manifest` becomes `{Vars map[string]string, Includes
+  map[string]string, Tasks map[string]Task}` where `Task` unmarshals from
+  either a YAML scalar (shorthand) or a mapping (full form) via a custom
+  `UnmarshalYAML`. `Service`/`Dep`/`Script`/`Hook` and their three
+  incompatible "where does this run" mechanisms are retired together.
+- `internal/graph`: unchanged — `Task.Deps` is the edge list directly;
+  `TopoSort` still drives order. `includes:` targets get namespaced node
+  names merged into the same graph (one `TopoSort` call, not one per file).
+- Revision 2's `Driver`/`Handle` split, `ReadyCheck{HTTP, TCP, Command}`,
+  and "common dep kinds become in-binary driver defaults" still hold as the
+  internal execution model. What's new here is *inference* sitting in
+  front of `ReadyCheck`/the detached flag, so most tasks never populate
+  them explicitly.
+- New: a small port-sniffer (parse `-p`/`--port` out of `run:`, or read an
+  explicit `port:` field) feeding both the readiness and detached inference
+  — this is the one genuinely new piece of logic Revision 3 adds beyond
+  "simplify the schema."
 
 ### Updated open questions
 
-1. How far does devx's Make parser need to go — full GNU Make grammar
-   (pattern rules, `ifeq`, functions like `$(wildcard …)`), or a documented
-   subset sufficient for dev-env manifests (targets, prerequisites, tab
-   recipes, `=`/`:=`/`?=`/`+=` variables, `include`, `.PHONY`)? Supporting
-   the full grammar is more work for marginal benefit if nobody writes
-   `ifeq` in a dev-env file in practice.
-2. Should devx *shell out to* a real `make` binary for execution (simplest,
-   100% semantic fidelity, but adds `make` as a runtime dependency devx
-   currently doesn't have) or parse-and-execute itself (no new runtime
-   dependency, but devx now owns Make-compatible execution semantics,
-   e.g. recipe lines run in one shell vs one shell per line, `.ONESHELL`)?
-3. Version/surface coupling (axis 2 above) is a separate, ongoing effort
-   from this redesign — does it get its own design doc once this one lands,
-   or get folded in as each `Driver` is implemented in the migration plan?
+1. Port inference from parsing `run:` text (`-p 5432:5432`, `--port 9000`)
+   is necessarily heuristic — covers `docker run`/most CLI flag
+   conventions, but will miss custom launchers. Is a silent fallback to "no
+   ready check" acceptable for those, or should devx warn
+   ("`web` looks long-running but no port was detected — add `ready:`
+   explicitly") during `devx validate`?
+2. `${VAR}` substitution is devx's own templating, applied to specific
+   string fields (`run`, `ready.http`, `ready.tcp`, `ports`, etc.) rather
+   than the whole document — which fields need it enumerated, and is plain
+   string replacement sufficient or do we need escaping for a literal `$`
+   in a recipe?
+3. Version/surface coupling (CLI-shelling to `docker`/`kubectl` vs SDKs) is
+   still a separate, ongoing concern from this schema simplification — own
+   design doc once this lands, or folded into the migration plan per
+   `Driver`?
