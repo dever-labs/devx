@@ -20,7 +20,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ## Getting started
 
-1. [Fork](https://github.com/dever-labs/dever/fork) the repository.
+1. [Fork](https://github.com/dever-labs/devx/fork) the repository.
 2. Clone your fork:
    ```sh
    git clone https://github.com/<your-username>/dever.git
@@ -28,7 +28,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
    ```
 3. Add the upstream remote:
    ```sh
-   git remote add upstream https://github.com/dever-labs/dever.git
+   git remote add upstream https://github.com/dever-labs/devx.git
    ```
 
 ## Development setup
@@ -62,20 +62,20 @@ go test ./tests/integration/... -tags integration -v
 ## Project structure
 
 ```
-cmd/devx/           — CLI entry point and command handlers
+cmd/devx/           — CLI entry point; one cmd_<name>.go per subcommand
 internal/           — private packages
-  config/           — manifest parsing and validation
-  compose/          — Docker Compose rendering and telemetry stack
+  config/           — devx.yaml parsing and validation
+  task/             — task graph resolution, scheduling, process/container drivers
   runtime/          — container runtime abstraction (Docker, Podman)
-  k8s/              — Kubernetes manifest rendering
   graph/            — dependency graph and topological sort
-  lock/             — lockfile management
+  doctor/           — tool/health checks for `devx doctor`
+  setup/            — tool install, host-side setup steps
+  ai/               — LLM client (openai, anthropic, azure-openai, ollama, local)
 docs/               — user-facing documentation
 examples/           — complete working project examples
-packaging/          — distribution packaging (Homebrew, npm, WinGet, Chocolatey)
-scripts/            — build and install scripts
 schemas/            — JSON Schema for devx.yaml
-tests/integration/  — end-to-end tests
+scripts/            — build and install scripts
+tests/integration/  — end-to-end tests (build tag: integration)
 ```
 
 ## Making changes

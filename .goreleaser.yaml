@@ -1,0 +1,57 @@
+# goreleaser configuration — see https://goreleaser.com
+#
+# Builds cross-platform devx binaries and generates checksums.txt, replacing
+# the hand-rolled matrix-build steps previously in .github/workflows/release.yml.
+#
+# release-please (not goreleaser) owns creating the git tag and the GitHub
+# Release object + changelog; release.mode: keep-existing below means
+# goreleaser preserves that existing release's body/notes and only attaches
+# artifacts to it.
+version: 2
+
+project_name: devx
+
+builds:
+  - id: devx
+    main: ./cmd/devx
+    binary: devx
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Matches the previous hand-rolled `-ldflags="-s -w -X main.version=..."`.
+    ldflags:
+      - -s -w -X main.version={{ .Tag }}
+
+archives:
+  - id: devx
+    ids: [devx]
+    formats: [binary]
+    name_template: "devx-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  mode: keep-existing
+
+# Homebrew tap (macOS + Linux). goreleaser's classic `brews:` (Formula)
+# config is deprecated in v2 in favor of `homebrew_casks:`, which supports
+# plain CLI binaries via the `binary` stanza just as well.
+homebrew_casks:
+  - name: devx
+    repository:
+      owner: dever-labs
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/dever-labs/devx
+    description: Cross-platform dev task orchestrator
+    commit_author:
+      name: github-actions[bot]
+      email: github-actions[bot]@users.noreply.github.com

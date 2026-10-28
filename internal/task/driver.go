@@ -70,7 +70,8 @@ func (d *processDriver) Start(ctx context.Context, et *EffectiveTask, logPath st
 	cmd := exec.Command(shellBin, shellArg, et.ResolvedRun)
 	cmd.Dir = et.ResolvedDir
 	cmd.Env = append(os.Environ(), envSlice(et.ResolvedEnv)...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	setPgid(cmd.SysProcAttr)
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -148,14 +149,14 @@ func (h *processHandle) Stop(ctx context.Context, timeout time.Duration) error {
 	if h.cmd.Process == nil {
 		return nil
 	}
-	pgid := h.cmd.Process.Pid
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	pid := h.cmd.Process.Pid
+	stopProcessTree(pid)
 
 	select {
 	case <-h.exited:
 		return nil
 	case <-time.After(timeout):
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		killProcessTree(pid)
 		return nil
 	}
 }

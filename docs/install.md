@@ -8,19 +8,19 @@ devx is available through several package managers and a direct download.
 
 **Linux / macOS**
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.sh | sh
 ```
 
 **Windows (PowerShell)**
 ```powershell
-iwr https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.ps1 | iex
+iwr https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.ps1 | iex
 ```
 
 ---
 
 ## Manual setup
 
-Download a pre-built binary from [GitHub Releases](https://github.com/dever-labs/dever/releases/latest):
+Download a pre-built binary from [GitHub Releases](https://github.com/dever-labs/devx/releases/latest):
 
 | Platform | File |
 |----------|------|
@@ -37,7 +37,7 @@ SHA-256 checksums are published alongside each release in `checksums.txt`.
 
 ```sh
 # Replace <version> and <platform> with e.g. v1.0.0 and linux-amd64
-curl -Lo devx https://github.com/dever-labs/dever/releases/download/<version>/devx-<platform>
+curl -Lo devx https://github.com/dever-labs/devx/releases/download/<version>/devx-<platform>
 chmod +x devx
 sudo mv devx /usr/local/bin/devx
 devx version
@@ -55,7 +55,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Windows
 
-1. Download `devx-windows-amd64.exe` from the [Releases](https://github.com/dever-labs/dever/releases/latest) page.
+1. Download `devx-windows-amd64.exe` from the [Releases](https://github.com/dever-labs/devx/releases/latest) page.
 2. Rename it to `devx.exe` and move it to a folder of your choice, e.g. `C:\Tools\devx\`.
 3. Add that folder to your `PATH`:
    - Open **System Properties → Advanced → Environment Variables**.
@@ -73,7 +73,7 @@ Alternatively, from PowerShell (no admin required):
 $dir = "$env:LOCALAPPDATA\devx"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 # Download
-Invoke-WebRequest https://github.com/dever-labs/dever/releases/latest/download/devx-windows-amd64.exe `
+Invoke-WebRequest https://github.com/dever-labs/devx/releases/latest/download/devx-windows-amd64.exe `
     -OutFile "$dir\devx.exe"
 # Add to PATH for current user
 $path = [System.Environment]::GetEnvironmentVariable("Path","User")
@@ -83,17 +83,6 @@ if ($path -notlike "*$dir*") {
 # Verify (in a new shell)
 devx version
 ```
-
----
-
-## npm
-
-```sh
-npm install -g @dever-labs/devx
-devx version
-```
-
-The postinstall script downloads the correct binary for your OS and architecture from the GitHub release.
 
 ---
 
@@ -111,39 +100,13 @@ brew upgrade devx
 
 ---
 
-## Chocolatey (Windows)
-
-```powershell
-choco install devx
-```
-
-To upgrade:
-```powershell
-choco upgrade devx
-```
-
----
-
-## WinGet (Windows)
-
-```powershell
-winget install dever-labs.devx
-```
-
-To upgrade:
-```powershell
-winget upgrade dever-labs.devx
-```
-
----
-
 ## Build from source
 
 Requires [Go 1.21+](https://go.dev/dl/).
 
 ```sh
-git clone https://github.com/dever-labs/dever.git
-cd dever
+git clone https://github.com/dever-labs/devx.git
+cd devx
 go build ./cmd/devx
 ./devx version
 ```
@@ -162,8 +125,8 @@ Binaries are placed in `dist/`.
 
 ```sh
 # Download the binary and checksums file
-curl -LO https://github.com/dever-labs/dever/releases/latest/download/devx-linux-amd64
-curl -LO https://github.com/dever-labs/dever/releases/latest/download/checksums.txt
+curl -LO https://github.com/dever-labs/devx/releases/latest/download/devx-linux-amd64
+curl -LO https://github.com/dever-labs/devx/releases/latest/download/checksums.txt
 
 # Verify
 sha256sum --check --ignore-missing checksums.txt
@@ -177,10 +140,12 @@ On macOS use `shasum -a 256 --check checksums.txt`.
 
 ### Publishing a new release
 
-1. Tag the commit: `git tag v1.2.3 && git push origin v1.2.3`
-2. The [release workflow](../.github/workflows/release.yml) automatically builds all six targets and creates a GitHub Release with binaries + checksums.
-3. Update the following manually after a release:
-   - **Homebrew tap** — copy `homebrew/devx.rb` to `dever-labs/homebrew-tap`, fill in the new version and SHA-256 hashes.
-   - **WinGet** — copy `winget/` manifests to `microsoft/winget-pkgs` under `manifests/d/dever-labs/devx/<version>/`, fill in version and SHA-256 hashes, open a PR.
-   - **Chocolatey** — update the version in `chocolatey/devx.nuspec`, run `choco pack`, then `choco push`.
-   - **npm** — update `version` in `npm/package.json` and run `npm publish`.
+Releases are fully automated:
+
+1. Merge Conventional Commit-style PRs (`feat:`, `fix:`, `fix!:`/`BREAKING CHANGE:`, etc.) to `main`.
+2. [release-please](https://github.com/googleapis/release-please) opens/updates a "Release PR" that bumps the version and rewrites `CHANGELOG.md` from those commits.
+3. Merging the Release PR makes release-please tag the commit and publish a GitHub Release.
+4. That `release: created` event triggers [goreleaser](https://goreleaser.com) (see `.goreleaser.yaml`), which builds all platform binaries, generates `checksums.txt`, attaches them to the release, and pushes an updated formula to `dever-labs/homebrew-tap`.
+
+No manual tagging, changelog editing, or Homebrew formula updates are needed.
+

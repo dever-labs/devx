@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
-# Install devx — usage: curl -fsSL https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.sh | sh
+# Install devx — usage: curl -fsSL https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.sh | sh
 set -e
 
-REPO="dever-labs/dever"
+REPO="dever-labs/devx"
 BINARY="devx"
 INSTALL_DIR="${DEVX_INSTALL_DIR:-/usr/local/bin}"
 
