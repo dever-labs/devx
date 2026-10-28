@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
+	devxruntime "github.com/dever-labs/devx/internal/runtime"
 	"github.com/dever-labs/devx/internal/task"
 )
 
@@ -218,5 +220,27 @@ func TestNewScheduler(t *testing.T) {
 	}
 	if sched == nil {
 		t.Fatal("expected non-nil scheduler")
+	}
+}
+
+func TestLookPathQuiet(t *testing.T) {
+	if !lookPathQuiet("sh") {
+		t.Error("expected lookPathQuiet(\"sh\") to be true (sh should be on PATH)")
+	}
+	if lookPathQuiet("definitely-not-a-real-binary-xyz") {
+		t.Error("expected lookPathQuiet to return false for a nonexistent binary")
+	}
+}
+
+func TestSelectContainerRuntime_ReturnsRuntimeOrErrNoRuntime(t *testing.T) {
+	rt, err := selectContainerRuntime(context.Background())
+	if err != nil {
+		if err != devxruntime.ErrNoRuntime {
+			t.Errorf("expected ErrNoRuntime or a valid runtime, got error: %v", err)
+		}
+		return
+	}
+	if rt == nil {
+		t.Error("expected a non-nil runtime when err is nil")
 	}
 }
