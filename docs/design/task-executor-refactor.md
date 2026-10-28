@@ -109,10 +109,14 @@ instead of capturing for `logs`), `sources: [glob, ...]` / `generates:
 [glob, ...]` (optional, skip re-running if `generates:` is newer than
 every matched `sources:` file — see "Incremental skip" below), `port:
 <int>` (optional, override when `run:`'s port can't be parsed — see
-"Inference" below). No `driver:`/`with:` field — `run:` is plain shell,
-technology-neutral by construction. No before/after hooks — `deps:` is
-the only ordering primitive; there is no separate "runs after, without
-being a declared prerequisite" concept (see "Alternatives considered").
+"Inference" below), `timeout: <duration>` (optional, hard ceiling on a
+one-shot recipe or a readiness wait — see "Reliability" below), `restart:
+never|on-failure|always` (optional, only for `detached: true` tasks —
+see "Reliability" below). No `driver:`/`with:` field — `run:` is plain
+shell, technology-neutral by construction. No before/after hooks —
+`deps:` is the only ordering primitive; there is no separate "runs after,
+without being a declared prerequisite" concept (see "Alternatives
+considered").
 
 ### Inference, not required config
 
@@ -142,12 +146,51 @@ being a declared prerequisite" concept (see "Alternatives considered").
   `detached:` is only written to override the inference.
 - **Variables**: `${VAR}` substitution resolved by devx (not shell
   expansion, since it applies to non-shell fields like `ready.http` too).
-  Precedence mirrors Make: CLI override (`devx up db PORT=5555`) >
-  inherited process environment > `vars:` defaults.
+  Precedence mirrors Make, extended with `.env` for local-dev convenience
+  (same convention as Compose/foreman/direnv): CLI override (`devx up db
+  PORT=5555`) > inherited process environment > `.env`/`.env.local` in
+  the project root (loaded once at startup, never committed —
+  `.env.local` wins over `.env` if both exist) > `vars:` defaults. A
+  `.env` file is optional; nothing changes for a repo that doesn't have
+  one.
 - **Composition**: `includes: {name: path}` merges another `devx.yaml`'s
   tasks into **one** graph with namespaced task names (`infra:db`), not a
   recursive sub-process per file — see "Alternatives considered" for why
   recursive sub-invocation is the wrong model to copy from Make.
+
+### Reliability (matters as much to an AI agent driving devx as to a human)
+
+A CLI tool an agent shells out to has no way to distinguish "still
+working" from "stuck forever" beyond what the tool itself guarantees, and
+no way to know a stack is already running unless re-running the start
+command is safe. These are existing gaps this design should close, not
+new abstractions:
+
+- **`timeout: <duration>`** — a hard ceiling on a one-shot task's recipe,
+  or on a `ready:` wait, after which devx fails fast with a clear timeout
+  error instead of hanging indefinitely. Optional, with a conservative
+  built-in default (so a forgotten `timeout:` still bounds things) rather
+  than requiring every task to set one.
+- **`devx up` is idempotent**: running it again while the stack is
+  already up reconciles rather than erroring or double-starting — tasks
+  already running/ready are reported as such and skipped, exactly like
+  `docker compose up` run twice. This matters more for devx than for a
+  human-only tool, since an agent retrying a command after an ambiguous
+  result is a normal failure-recovery pattern, not a mistake.
+- **`restart: never|on-failure|always`** (only meaningful on `detached:
+  true` tasks; default `never`) — Docker's own naming for this, reused
+  rather than inventing new vocabulary. `devx status` distinguishes
+  `crashed`/`restarting` from `running`/`ready` so both a human and an
+  agent parsing `--json` output can tell "it's fine" from "it died and
+  came back" from "it died and stayed dead."
+- **Secrets never echo back**: `${HOST_ENV_VAR}`-resolved `env:` values
+  must never appear in `--dry-run` output, `--json` output, or logs —
+  substituted commands shown by `--dry-run`/`devx tasks` render `env:`
+  entries as `KEY=<redacted>`, never the resolved value. This matters
+  more than it would for a human-only tool: both a human pasting terminal
+  output into chat/an issue and an agent echoing tool output verbatim (a
+  documented failure mode for AI coding tools generally) are realistic
+  leak paths, not hypothetical ones.
 
 ### Additional optional fields (from Make / modern task runners)
 
@@ -239,6 +282,18 @@ legacy-migrate:
   desc: Pre-existing bash script using array tricks the embedded shell can't parse
   shell: bash
   run: ./scripts/legacy-migrate.sh
+
+# --- timeout: (bound a recipe/readiness wait) ---
+smoke:
+  desc: One-shot smoke test — never let a hung request block `devx up` forever
+  timeout: 30s
+  run: ./scripts/smoke-test.sh
+
+# --- restart: (only for detached: true) ---
+db:
+  desc: Postgres for local dev, restarted if the container dies
+  run: docker run --rm -d --name db -p ${PORT}:5432 ${IMAGE}
+  restart: on-failure
 ```
 
 
@@ -355,20 +410,22 @@ surfaced:
 
 | Command | Behavior |
 |---|---|
-| `devx up` | Transitive closure of every `detached: true` task's `deps:` (see worked example below for the exact rule). Independent one-shot branches run in parallel, not strictly sequential — mirrors Make's `-j` by default, not an opt-in flag. |
+| `devx up` | Transitive closure of every `detached: true` task's `deps:` (see worked example below for the exact rule). Independent one-shot branches run in parallel, not strictly sequential — mirrors Make's `-j` by default, not an opt-in flag. **Idempotent**: tasks already running/ready are reported and skipped, not restarted — safe to re-run, including by an agent retrying after an ambiguous result. |
 | `devx up <name...>` | **New.** Partial up — only the named tasks + their transitive deps, not the whole closure. Mirrors `make a b c`. |
-| `devx up --dry-run` | **New.** Print the resolved graph and every substituted `run:`/`ready:` command, execute nothing. Mirrors `make -n`. |
+| `devx up --dry-run` | **New.** Print the resolved graph and every substituted `run:`/`ready:` command, execute nothing. Mirrors `make -n`. Resolved `env:` values are shown redacted (`KEY=<redacted>`), never the real secret. |
 | `devx up --keep-going` | **New.** Default is fail-fast (stop everything on first error, closest to least-surprising for a dev-env bootstrap). `--keep-going` continues unrelated branches of the graph on failure — mirrors `make -k`. |
 | `devx up --group <name>` | **New.** Only tasks whose `group:` matches (+ their deps) — reuses the `group:` field already defined for `--help`, instead of inventing a second selection mechanism (e.g. tags). |
 | `devx run <name...>` | Run one-shot task(s) to completion, in the order given, respecting `deps:`. Multi-target, like `devx up <name...>`. |
 | `devx run <name> --dry-run` | Same dry-run semantics as `up`. |
+| `devx run <name> --watch` | **New.** Re-run the task whenever its `sources:` globs change (requires `sources:` to be set — error otherwise, nothing to watch). Same spirit as Docker Compose Watch, scoped to one task instead of a whole stack. |
 | `devx <name>` | **New.** Shorthand for `devx run <name>` (mirrors `make <target>`). Built-in command names always take precedence on collision — see "`devx --help`" below. |
-| `devx status` | Unchanged in spirit — detached tasks: running/ready/crashed; one-shot tasks with `sources:`/`generates:`: up to date / stale, last run time, exit code. |
+| `devx status` | Unchanged in spirit — detached tasks: `running`/`ready`/`crashed`/`restarting` (per `restart:`); one-shot tasks with `sources:`/`generates:`: up to date / stale, last run time, exit code. |
 | `devx logs <name>` | Unchanged — tails captured output. For `interactive: true` tasks, `logs` has nothing captured (documented, not an error) since output went straight to the terminal when it ran. |
+| `devx exec <name> -- <cmd...>` | Unchanged from today — run `<cmd>` inside a running `detached: true` task's context (container/process), via `Handle.Exec`. Errors if the task isn't currently running. |
 | `devx down` | Unchanged — stops every running detached task in reverse dependency order. |
-| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. |
+| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`, `timeout`, `restart`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. `env:` values shown redacted, same as `--dry-run`. |
 | `devx --help` / `devx run <name> --help` / `devx <name> --help` | Generated from the manifest, Cobra-style — see "`devx --help` follows standard CLI conventions" above. |
-| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness), plus a task name colliding with a built-in command, surface here as warnings, not errors. |
+| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness), plus a task name colliding with a built-in command, plus `restart:`/`timeout:` set on a non-`detached`/non-one-shot task respectively, surface here as warnings, not errors. |
 
 ## Example: a realistic multi-service project
 
@@ -538,8 +595,10 @@ type Task struct {
     Interactive bool
     Sources     []string // glob patterns
     Generates   []string // glob patterns
-    Shell       string   // "" (default, embedded) | "bash" | "sh" | "cmd" | "powershell" | "pwsh" | a custom path
-    Port        int      // 0 = infer by parsing Run; set only when parsing can't find it
+    Shell       string        // "" (default, embedded) | "bash" | "sh" | "cmd" | "powershell" | "pwsh" | a custom path
+    Port        int           // 0 = infer by parsing Run; set only when parsing can't find it
+    Timeout     time.Duration // 0 = built-in conservative default, not unbounded
+    Restart     string        // "never" (default) | "on-failure" | "always"; detached-only
 }
 
 type ReadyCheck struct {
@@ -742,6 +801,20 @@ shape as part of landing this.
 9. `sources:`/`generates:` glob matching + mtime comparison, gating
    whether `commandDriver`/`processDriver` actually runs a task's recipe
    or reports "up to date."
+10. `.env`/`.env.local` loading into the inherited environment at
+    startup, ahead of `vars:` resolution; `timeout:` enforcement around
+    recipe execution and `ready:` waits (conservative built-in default
+    when unset); `restart:` policy handling in `processDriver`/
+    `commandDriver`'s supervision loop plus the new `crashed`/
+    `restarting` states in `devx status`.
+11. `devx up`/`devx run` idempotency: detect already-running/ready
+    detached tasks before starting them, skip with a clear "already
+    running" report instead of restarting; secret redaction in
+    `--dry-run`/`devx tasks --json` output for `env:` values.
+12. `devx run <name> --watch`: file-watcher on a task's `sources:` globs,
+    re-invoking the recipe on change (error if `sources:` isn't set —
+    nothing to watch); `devx exec <name> -- <cmd...>` carried over
+    unchanged onto the new `Handle.Exec`.
 
 Each step keeps `go build ./... && go test ./...` green; the full
 rewrite lands once all steps are done rather than being individually
@@ -784,3 +857,17 @@ releasable (there's no old behavior left to fall back to mid-rewrite).
    (replacing the hand-rolled `cmd_completion.go`) for free. Arguments
    against: a dependency + rewrite of every `cmd_*.go` entrypoint, for a
    CLI surface this design is trying to keep small in the first place.
+8. `--watch`'s re-run behavior on rapid successive file changes (save-all
+   in an editor, a git checkout touching many files at once) needs a
+   debounce window — how long, and is it configurable per task or a
+   single built-in constant?
+9. `restart: on-failure`'s retry behavior (immediate retry vs. backoff,
+   and whether there's a max-retries ceiling before devx gives up and
+   reports `crashed` instead of endlessly `restarting`) isn't specified —
+   worth a simple fixed backoff + cap (mirroring Kubernetes's
+   `CrashLoopBackOff`), or is that over-engineering for a local dev tool?
+10. `.env`/`.env.local` discovery is scoped to "the project root" — for a
+    manifest using `includes:`, does that mean the root `devx.yaml`'s
+    directory only, or does each included file's own directory also get
+    checked for its own `.env`? The former is simpler; the latter matches
+    `vars:`/`includes:` being per-file already.
