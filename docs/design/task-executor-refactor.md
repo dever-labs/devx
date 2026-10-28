@@ -208,7 +208,16 @@ considered").
 - **Composition**: `includes: {name: path}` merges another `devx.yaml`'s
   tasks into **one** graph with namespaced task names (`infra:db`), not a
   recursive sub-process per file — see "Alternatives considered" for why
-  recursive sub-invocation is the wrong model to copy from Make.
+  recursive sub-invocation is the wrong model to copy from Make. Task
+  names are merged into one flat namespace, but `vars:` are not: an
+  included file's own `vars:` are scoped to that file's own tasks only
+  (mirrors "Working directory" below — each included file owns its
+  directory and its vars), not visible to the root manifest or to other
+  included files. The root manifest's `vars:` remain globally visible to
+  every task, including included ones, and act as the fallback/default
+  layer beneath an included file's own `vars:` of the same name — same
+  precedence order as CLI/env override root `vars:` (see "Variables"
+  above), just one level deeper per included file.
 - **Working directory**: `run:` (and relative `sources:`/`generates:`
   globs) execute with the defining `devx.yaml` file's own directory as
   the working directory by default — for the root manifest that's the
@@ -992,7 +1001,15 @@ overhead parallelism for issues that don't need hard isolation:
      e.g. `<git-common-dir>/devx/workspaces.json`. Still fully local,
      file-based, no daemon/network service; just a shared location
      instead of a per-worktree one for the state that's inherently
-     cross-worktree.
+     cross-worktree. **Concurrency**: every read-modify-write of
+     `workspaces.json` (registering/removing a workspace, bumping a
+     `scope: shared` reference count) takes an OS file lock
+     (`flock`/`LockFileEx`) on a sibling `workspaces.json.lock` for the
+     duration of the update, so two `devx up`/`down`/`workspace rm`
+     invocations racing from different worktree windows serialize
+     instead of corrupting or lost-updating the file — still no daemon,
+     just a short-held advisory lock around an otherwise-atomic
+     read-modify-rename write.
 
 This tier is explicitly **not** a security boundary: same kernel, PID
 namespace, and network stack, so two workspaces can still see/signal/
