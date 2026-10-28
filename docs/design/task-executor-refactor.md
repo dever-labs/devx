@@ -121,8 +121,11 @@ base for relative `sources:`/`generates:` globs — see "Working directory"
 below), `requires: [tool, ...]` (optional, external binaries this task's
 `run:` needs on `PATH` — see "Reliability" below), `containerName:
 <string>` (optional, override when a container's name can't be parsed
-from `run:` for `docker stop` — see "Reliability" below). No
-`driver:`/`with:` field — `run:` is plain shell, technology-neutral by
+from `run:` for `docker stop` — see "Reliability" below), `scope: shared
+| workspace` (optional, default `workspace` — see "Parallel-issue
+workflows" above; `shared` tasks are deduplicated across concurrently
+running `devx up --workspace <id>` invocations instead of started once
+per workspace). No `driver:`/`with:` field — `run:` is plain shell, technology-neutral by
 construction. No before/after hooks —
 `deps:` is the only ordering primitive; there is no separate "runs after,
 without being a declared prerequisite" concept (see "Alternatives
@@ -557,6 +560,9 @@ surfaced:
 | `devx up --dry-run` | **New.** Print the resolved graph and every substituted `run:`/`ready:` command, execute nothing. Mirrors `make -n`. Resolved `env:` values are shown redacted (`KEY=<redacted>`), never the real secret. |
 | `devx up --keep-going` | **New.** Default is fail-fast (stop everything on first error, closest to least-surprising for a dev-env bootstrap). `--keep-going` continues unrelated branches of the graph on failure — mirrors `make -k`. |
 | `devx up --group <name>` | **New.** Only tasks whose `group:` matches (+ their deps) — reuses the `group:` field already defined for `--help`, instead of inventing a second selection mechanism (e.g. tags). |
+| `devx up --workspace <id>` | **New.** See "Parallel-issue workflows" above. Namespaces container/network/volume names and non-pinned ports with `<id>`, so multiple `devx up` invocations against different `git worktree`s of the same manifest (e.g. one per issue, attached to the same shared devcontainer) can run concurrently without colliding. Defaults to a value derived from the current `git worktree` path when omitted; `scope: shared` tasks are deduplicated across workspaces rather than started once per workspace. |
+| `devx workspace list` / `devx workspace rm <id>` | **New.** `list` shows every active workspace id and its tasks (grouped, mirrors `devx ps --all-workspaces` below). `rm <id>` tears down that workspace's containers/volumes and frees its ports; `scope: shared` tasks are only stopped if no other workspace still references them. |
+| `devx ps --all-workspaces` | **New.** Same as `devx status`'s running-task view, but across every active workspace at once instead of just the current one — for checking what's running across issues without switching windows. |
 | `devx up --watch` | **New.** After the stack is up, watches every task in the resolved closure that has `sources:` set and restarts it (stop, re-run recipe, wait for ready again for `detached:` tasks; just re-run for one-shot `deps:` of a detached task, e.g. `migrate`) on change — the whole-stack version of `devx run <name> --watch` below, applied automatically across the graph instead of needing one `--watch` per service in separate terminals. Mirrors `docker compose up --watch`/`docker compose watch`. A rebuild failure on one task is reported inline and leaves the rest of the stack running (per-task isolation) rather than stopping the whole `--watch` session. |
 | `devx run <name...>` | Run one-shot task(s) to completion, in the order given, respecting `deps:`. Multi-target, like `devx up <name...>`. |
 | `devx run <name> --dry-run` | Same dry-run semantics as `up`. |
@@ -567,7 +573,7 @@ surfaced:
 | `devx logs <name>` | Unchanged — tails captured output for one task. For `interactive: true` tasks, `logs` has nothing captured (documented, not an error) since output went straight to the terminal when it ran. |
 | `devx exec <name> -- <cmd...>` | Unchanged from today — run `<cmd>` inside a running `detached: true` task's context (container/process), via `Handle.Exec`. Errors if the task isn't currently running. |
 | `devx down` | Unchanged — stops every running detached task in reverse dependency order. Graceful by default (see "Graceful stop, driver-aware" under "Reliability": SIGTERM/`docker stop` + grace period from `stopTimeout:`, then force); `devx down --force` skips straight to SIGKILL/`docker kill`. |
-| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`, `timeout`, `restart`, `stopTimeout`, `dir`, `requires`, `containerName`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. `env:` values shown redacted, same as `--dry-run`. `dir:` is always included resolved, even when inferred (never silently implicit — see "Reliability"). |
+| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`, `timeout`, `restart`, `stopTimeout`, `dir`, `requires`, `containerName`, `scope`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. `env:` values shown redacted, same as `--dry-run`. `dir:` is always included resolved, even when inferred (never silently implicit — see "Reliability"). |
 | `devx --help` / `devx run <name> --help` / `devx <name> --help` | Generated from the manifest, Cobra-style — see "`devx --help` follows standard CLI conventions" above. |
 | `devx validate` | Unchanged command, extended checks (all warnings, not errors): a task name colliding with a built-in command; `restart:` set on a non-`detached` task (meaningless — nothing to restart); two tasks resolving to the same port (see "Port-collision detection" under "Reliability"); a detached task with no port/readiness inferred and no `ready:`/`port:` written (see "Readiness" under "Inference"); a container-shaped `run:` with no parseable/overridden `containerName:` (see "Graceful stop, driver-aware" under "Reliability"). `timeout:` has no such check: it's valid on both one-shot recipes and detached tasks' `ready:` waits, so there's no task shape it's ever a mistake on. |
 | `devx doctor` | Extended to also check every task's `requires:` binaries are on `PATH`, not just devx's own built-in tool checks — surfaces "`web` needs `docker`, which isn't installed" per task instead of only devx's own dependencies. |
@@ -768,6 +774,7 @@ type Task struct {
     Dir         string        // "" = defining file's own directory
     Requires    []string      // external binaries on PATH this task's Run needs
     ContainerName string      // "" = infer --name/service from Run; override when parsing can't
+    Scope       string        // "workspace" (default) | "shared" — see "Parallel-issue workflows"
 }
 
 type ReadyCheck struct {
@@ -874,6 +881,111 @@ one.
    `compose-spec/compose-go` rather than the `docker` CLI binary for
    anything devx generates; capability-probe instead of version-assume;
    pin minimum supported versions and contract-test them in CI.
+
+## Parallel-issue workflows (working on N issues at once)
+
+A recurring pain point with AI coding agents (Copilot and others) and with
+multi-issue human workflows alike: sandboxing/isolation per issue is
+valuable, but "one full devcontainer + one VS Code window per issue"
+quickly becomes its own management overhead (N windows, N running stacks,
+N sets of ports to remember). This isn't something devx should force one
+answer to — different issues genuinely need different amounts of
+isolation. Instead devx should make the *cheap* end of this spectrum good,
+and document the rest so people know what's available when they outgrow
+it.
+
+### Tier 1 (new, devx-native): shared devcontainer, isolated stacks
+
+VS Code's Dev Containers extension can attach **multiple windows to one
+already-running container** ("Dev Containers: Attach to Running
+Container") — no rebuild, no new container, just a second window rooted at
+a different path. Combined with `git worktree`, this gives near-zero-
+overhead parallelism for issues that don't need hard isolation:
+
+1. One devcontainer, built once, mounts a parent folder containing
+   multiple `git worktree add`-created checkouts (`../repo-issue-123`,
+   `../repo-issue-124`, ...).
+2. A second/third VS Code window attaches to the same running container,
+   rooted at each worktree.
+3. **devx's job**: make the *running stacks* not collide inside that
+   shared container. Today nothing prevents two `devx up` invocations
+   (one per worktree) from colliding on container names, networks,
+   volumes, or ports. This needs:
+   - A **workspace id**, derived by default from the git worktree path
+     (falls back to the current directory name when not inside a
+     worktree), overridable via `devx up --workspace <id>`.
+   - A `${workspace}` template token, usable in `containerName:` and
+     anywhere `${VAR}` substitution already applies, so container/
+     network/volume names get it folded in automatically without the
+     manifest author doing string concatenation.
+   - Auto port allocation: when `port:` isn't pinned, devx picks a free
+     ephemeral port per workspace instead of a fixed one; when `port:`
+     *is* pinned, `devx validate` warns on cross-workspace collision
+     instead of silently double-binding.
+   - A new `scope: shared | workspace` task field (default `workspace`).
+     `shared` tasks (e.g. one Postgres everyone's issue branches point
+     at) run once regardless of how many workspaces are active; a
+     second `devx up` from another workspace recognizes it's already up
+     and just waits on its `ready:` check instead of starting a second
+     copy.
+   - A new `devx workspace` subcommand: `list` (what's running, grouped
+     by workspace id), `rm <id>` (tear down that workspace's containers/
+     volumes and free its ports — including `shared`-scope tasks only if
+     no other workspace still references them), and `devx ps
+     --all-workspaces` to see everything across issues from any window.
+   - `.devx/` state is already cwd-relative, so per-worktree state
+     separation is free — no change needed there.
+
+This tier is explicitly **not** a security boundary: same kernel, PID
+namespace, and network stack, so two workspaces can still see/signal/
+resource-starve each other. It solves naming collisions and day-to-day
+convenience, not isolation between adversarial or untrusted work — make
+that limitation explicit in `devx --help`/docs rather than implying more
+safety than it provides.
+
+### Tier 2 (already possible today, no devx change): per-worktree devcontainer
+
+For issues that need real process/network isolation but should stay
+local: build the devcontainer image once, then run `devcontainer up
+--workspace-folder <worktree>` per issue and attach a separate window to
+each resulting container. Same image/build cache reused (cheap to start),
+but genuine isolation (separate PID/network namespace per container).
+Costs more local CPU/RAM per concurrent issue than Tier 1; devx itself
+needs no changes to support this — it already works per-container exactly
+as it does today.
+
+### Tier 3 (existing tools, no devx change): DevPod / GitHub Codespaces
+
+For full isolation, or to move the resource cost off the local machine
+entirely: DevPod (reads the same `devcontainer.json`, decouples
+"workspace" from "where it runs" — Docker, k8s, or cloud) or GitHub
+Codespaces (one cloud codespace per issue, prebuilds for fast cold start).
+Switching issues becomes switching tabs/windows instead of managing local
+containers. No devx changes needed — devx still runs the same `devx.yaml`
+stack inside whichever container it ends up in.
+
+### Tier 4 (future, separate project, not building yet): `dever-labs/loom`
+
+[`dever-labs/loom`](https://github.com/dever-labs/loom) ("AI Sandbox") is
+a separate, much larger project — a central web UI with pluggable
+runners/executors (persistent, desktop, and an on-demand Kubernetes
+executor pool with gVisor/Kata-level isolation), plus a `remote-ide-access`
+component purpose-built for exactly the gap this tier is meant to close:
+a session-scoped SSH bastion issuing short-lived certs, with one-click
+**"Open in IDE"** deep links for VS Code Remote-SSH and JetBrains Gateway
+(no devcontainer.json-specific IDE integration — it's a plain remote SSH
+host, which Gateway handles more reliably), SFTP for anything else, and
+automatic port-forwarding links for dev servers running inside the
+session. That combination — Codespaces-grade isolation *and* first-class
+native-IDE integration instead of a browser-only editor — is the explicit
+goal there.
+
+devx's role relative to loom: devx is the thing that runs **inside** a
+loom session (or a devcontainer, or bare metal) to stand up the actual
+`devx.yaml`-defined stack — loom owns sandbox lifecycle/isolation/IDE
+access, devx owns "what does this project's dev environment look like."
+No coupling needed beyond that; this is referenced here only so the
+tiering story is complete, not as a devx implementation dependency.
 
 ## Alternatives considered (and rejected)
 
@@ -1021,6 +1133,17 @@ shape as part of landing this.
     named "`<task>` needs `<tool>`" error instead of a generic shell
     "command not found"; `devx validate` also flags two tasks resolving
     to the same inferred/declared port.
+16. **Workspace support** (see "Parallel-issue workflows"): `scope:
+    shared | workspace` field (default `workspace`); workspace id
+    resolution (`--workspace <id>` flag, defaulting to the current `git
+    worktree` path when unset); `${workspace}` folded into the existing
+    `${VAR}` substitution pass for `containerName:`/generated network
+    and volume names; non-pinned ports allocated per-workspace from the
+    OS's ephemeral range instead of a single fixed default; `scope:
+    shared` tasks tracked with a reference count across workspaces so
+    `devx workspace rm <id>` only tears one down once nothing else
+    references it; `devx workspace list`/`rm` and `devx ps
+    --all-workspaces` as new `cmd_*.go` entrypoints.
 
 Each step keeps `go build ./... && go test ./...` green; the full
 rewrite lands once all steps are done rather than being individually
