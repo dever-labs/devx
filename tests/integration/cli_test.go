@@ -8,30 +8,21 @@ import (
 	"testing"
 )
 
-// A minimal valid devx.yaml used across multiple tests.
+// A minimal valid devx.yaml used across multiple tests. Task names are
+// top-level keys directly (no tasks:/services:/profiles: wrapper).
 const validManifest = `version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    runtime: compose
-    services:
-      api:
-        image: nginx:alpine
+api:
+  run: "echo hi"
 `
 
 // A manifest that declares the 'go' tool (always present in CI) and a runOnce step.
 const manifestWithTools = `version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    runtime: compose
-    services:
-      api:
-        image: nginx:alpine
+api:
+  run: "echo hi"
 tools:
   - name: go
     check: go version
@@ -41,13 +32,8 @@ tools:
 const manifestWithSetup = `version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    runtime: compose
-    services:
-      api:
-        image: nginx:alpine
+api:
+  run: "echo hi"
 setup:
   - name: echo-hello
     run: echo hello
@@ -101,21 +87,27 @@ func TestValidate_ValidManifest(t *testing.T) {
 	}
 }
 
-func TestValidate_MissingProjectName(t *testing.T) {
+func TestValidate_NoTasks(t *testing.T) {
 	dir := withManifest(t, `version: 1
 project:
-  name: ""
-  defaultProfile: local
-profiles:
-  local:
-    runtime: compose
-    services:
-      api:
-        image: nginx:alpine
+  name: my-app
 `)
 	_, _, code := run(t, dir, "validate")
 	if code == 0 {
-		t.Fatal("expected non-zero exit for manifest with missing project name")
+		t.Fatal("expected non-zero exit for a manifest with no tasks")
+	}
+}
+
+func TestValidate_WrongVersion(t *testing.T) {
+	dir := withManifest(t, `version: 2
+project:
+  name: my-app
+api:
+  run: "echo hi"
+`)
+	_, _, code := run(t, dir, "validate")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for an unsupported version:")
 	}
 }
 
@@ -154,13 +146,8 @@ func TestValidate_InvalidToolMissingCheck(t *testing.T) {
 	dir := withManifest(t, `version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    runtime: compose
-    services:
-      api:
-        image: nginx:alpine
+api:
+  run: "echo hi"
 tools:
   - name: mytool
 `)
@@ -174,13 +161,8 @@ func TestValidate_InvalidSetupPlatform(t *testing.T) {
 	dir := withManifest(t, `version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    runtime: compose
-    services:
-      api:
-        image: nginx:alpine
+api:
+  run: "echo hi"
 setup:
   - name: bad-step
     run: echo hi
