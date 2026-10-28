@@ -67,8 +67,8 @@ A task is either a bare string (just the command — the common case, no
 config needed) or an object, needed **only** when a task has `deps:`, an
 explicit `ready:`/`detached:` override, or a `desc:`. Task names are
 **top-level keys
-directly** — no `tasks:`/`services:`/`profiles:` wrapper. `vars:` and
-`includes:` are the only other reserved top-level keys.
+directly** — no `tasks:`/`services:`/`profiles:` wrapper. `vars:`,
+`includes:`, and `agents:` are the only other reserved top-level keys.
 
 ```yaml
 vars:
@@ -105,9 +105,12 @@ selection — see below), `env: {KEY: value}` (optional, raw pass-through to
 the subprocess — distinct from `vars:`, see below), `os: [linux, darwin,
 windows]` (optional, skip this task entirely on other platforms),
 `interactive: true|false` (optional, attach stdin/stdout/stderr directly
-instead of capturing for `logs`), `sources: [glob, ...]` / `generates:
-[glob, ...]` (optional, skip re-running if `generates:` is newer than
-every matched `sources:` file — see "Incremental skip" below), `port:
+instead of capturing for `logs`), `sources: [glob, ...]` (optional,
+watch list for `--watch`, valid on one-shot and `detached: true` tasks
+alike — see "Reliability" below) / `generates: [glob, ...]` (optional,
+one-shot only — paired with `sources:` to skip re-running if newer than
+every matched `sources:` file — see the `sources:`/`generates:` field
+description below), `port:
 <int>` (optional, override when `run:`'s port can't be parsed — see
 "Inference" below), `timeout: <duration>` (optional, hard ceiling on a
 one-shot recipe or a readiness wait — see "Reliability" below), `restart:
@@ -167,7 +170,8 @@ considered").
   (not shell expansion, since it applies to non-shell fields like
   `ready.http` too), applied to exactly these string fields: `run`,
   `ready.http`/`ready.tcp`/each element of `ready.cmd`, `env` values,
-  `dir`, and `sources`/`generates` glob patterns — **not** `desc`,
+  `dir`, `sources`/`generates` glob patterns, `containerName`, and each
+  `agents:` entry's command — **not** `desc`,
   `group`, or a task's own name, which are purely cosmetic/structural and
   substituting into them would just be confusing (and risks leaking a
   value into `--help` output outside the redaction path). A literal `$`
@@ -307,9 +311,8 @@ new abstractions:
 ### Additional optional fields (from Make / modern task runners)
 
 Reviewed against Make and modern runners (Taskfile, Just) for what else
-genuinely earns its keep in a dev-environment context — see "Explicitly
-not adopted" in "Alternatives considered" for what was reviewed and left
-out:
+genuinely earns its keep in a dev-environment context — see "Alternatives
+considered (and rejected)" below for what was reviewed and left out:
 
 - **`env: {KEY: value}`** — raw environment variables passed to the
   task's subprocess only. Deliberately separate from `vars:`: `vars:` are
@@ -347,20 +350,33 @@ out:
   task needs a terminal attached to one foreground invocation, which
   doesn't make sense for a supervised background process whose output
   also needs to be captured for `devx logs`.
-- **`sources: [glob, ...]` / `generates: [glob, ...]`** — Make's actual
-  core feature (skip a recipe if the target is already up to date versus
-  its prerequisites), applied to one-shot tasks instead of files-as-targets
-  generically. If every `generates:` glob match has a newer mtime than
-  every `sources:` glob match, `devx run`/`up` skips the recipe (reports
-  "up to date", same spirit as Make's own skip message) and anything
-  depending on it treats the skip as satisfied, exactly like an `os:`
-  skip above. Opt-in — a task with neither field always runs. High value
-  for expensive one-shot steps (codegen, compiling a tool, migrations
-  keyed off a migrations directory) that are wasteful to always re-run.
-  Only meaningful for one-shot tasks — `detached: true` together with
-  either field is a validation error, since a supervised long-running
-  process has no single "run to completion" point to compare timestamps
-  against.
+- **`sources: [glob, ...]` / `generates: [glob, ...]`** — two related but
+  distinct behaviors, split by task shape:
+  - **One-shot tasks** (the "Make's actual core feature" case — skip a
+    recipe if the target is already up to date versus its prerequisites,
+    applied to files instead of files-as-targets generically): if every
+    `generates:` glob match has a newer mtime than every `sources:` glob
+    match, `devx run`/`up` skips the recipe (reports "up to date", same
+    spirit as Make's own skip message) and anything depending on it
+    treats the skip as satisfied, exactly like an `os:` skip above.
+    `generates:` only makes sense paired with `sources:` on a one-shot
+    task — a supervised long-running process has no single "run to
+    completion" point to compare timestamps against, so `generates:`
+    together with `detached: true` is a validation error.
+  - **Detached tasks**: `sources:` alone (no `generates:`) is valid, and
+    means something different — purely the watch list for `devx up
+    --watch`/`devx run <name> --watch` (see "CLI surface" below) to
+    restart the task on change. There's no "up to date" skip concept
+    here (nothing to compare timestamps against), just "these files,
+    when changed, mean this service needs a restart." This is why the
+    worked example's `api` task (inferred `detached: true` via its
+    `ready:`) can carry `sources:` for `--watch` without contradicting
+    the one-shot-only skip rule above.
+  - Opt-in either way — a task with neither field always runs (one-shot)
+    or is never auto-restarted (detached). High value for expensive
+    one-shot steps (codegen, compiling a tool, migrations keyed off a
+    migrations directory) that are wasteful to always re-run, and for
+    detached services whose own tooling doesn't already self-watch.
 - **`shell: bash|sh|cmd|powershell|pwsh|<path>`** — opt out of the
   embedded cross-platform shell interpreter (see "Internal architecture")
   for a specific task, exec'ing a real installed shell binary instead.
@@ -563,7 +579,7 @@ surfaced:
 | `devx up --workspace <id>` | **New.** See "Parallel-issue workflows" above. Namespaces container/network/volume names and non-pinned ports with `<id>`, so multiple `devx up` invocations against different `git worktree`s of the same manifest (e.g. one per issue, attached to the same shared devcontainer) can run concurrently without colliding. Defaults to a value derived from the current `git worktree` path when omitted; `scope: shared` tasks are deduplicated across workspaces rather than started once per workspace. |
 | `devx workspace list` / `devx workspace rm <id>` | **New.** `list` shows every active workspace id and its tasks (grouped, mirrors `devx ps --all-workspaces` below). `rm <id>` tears down that workspace's containers/volumes and frees its ports; `scope: shared` tasks are only stopped if no other workspace still references them. |
 | `devx ps --all-workspaces` | **New.** Same as `devx status`'s running-task view, but across every active workspace at once instead of just the current one — for checking what's running across issues without switching windows. |
-| `devx workspace new <id> [--agent <name>]` | **New.** Create a `git worktree` for `<id>`, run `devx up --workspace <id>` in it, then attach interactively to the named `agents:` entry (or the sole one) — one command to start working on an issue. |
+| `devx workspace new <id> [--agent <name>]` | **New.** Create a `git worktree` for `<id>` (destination `../<repo-dir-name>-<id>`, new branch named `<id>` branched from the current `HEAD`; errors if the branch or worktree path already exists, suggesting `devx workspace agent <id>` instead of silently reusing/overwriting it), run `devx up --workspace <id>` in it, then attach interactively to the named `agents:` entry (or the sole one) — one command to start working on an issue. |
 | `devx workspace` (bare) | **New.** Shorthand for `devx workspace new` that fills in gaps interactively: prompts for `<id>` (used as both workspace id and new branch name) if omitted, and prompts to pick an `agents:` entry if more than one is configured and `--agent` wasn't given. TTY-only — in a non-interactive context (script, or an agent driving devx itself) it errors asking for `devx workspace new <id> --agent <name>` explicitly instead of hanging on a prompt. With exactly one `agents:` entry, no prompt either way. |
 | `devx workspace agent <id> [<name>]` | **New.** Attach interactively to an `agents:` entry, cwd'd into workspace `<id>`'s worktree with that workspace's env resolution — for re-attaching in a new terminal/window without recreating the stack. |
 | `devx workspace clean` | **New.** Bulk-removes stale workspaces: worktree directory no longer exists (removed outside devx) → reclaims its orphaned containers/volumes/ports; worktree's branch merged/deleted upstream → candidate for removal. Skips (warns, doesn't delete) any workspace with uncommitted/unpushed changes unless `--force`. On-demand only — no background/automatic cleanup, consistent with devx having no daemon. |
@@ -577,7 +593,7 @@ surfaced:
 | `devx logs` | **New.** With no task name: tails every currently-running detached task's output interleaved, name-prefixed and colored, in one stream — the same engine `devx up`'s default attached mode uses, available standalone for re-attaching to an already-`-d`-started stack. |
 | `devx logs <name>` | Unchanged — tails captured output for one task. For `interactive: true` tasks, `logs` has nothing captured (documented, not an error) since output went straight to the terminal when it ran. |
 | `devx exec <name> -- <cmd...>` | Unchanged from today — run `<cmd>` inside a running `detached: true` task's context (container/process), via `Handle.Exec`. Errors if the task isn't currently running. |
-| `devx down` | Unchanged — stops every running detached task in reverse dependency order. Graceful by default (see "Graceful stop, driver-aware" under "Reliability": SIGTERM/`docker stop` + grace period from `stopTimeout:`, then force); `devx down --force` skips straight to SIGKILL/`docker kill`. |
+| `devx down` | Stops every running detached task belonging to the current workspace, in reverse dependency order. Graceful by default (see "Graceful stop, driver-aware" under "Reliability": SIGTERM/`docker stop` + grace period from `stopTimeout:`, then force); `devx down --force` skips straight to SIGKILL/`docker kill`. **`scope: shared` tasks are reference-counted, same as `devx workspace rm`** (see "Parallel-issue workflows"): stopped only once no other workspace still references them — `devx down` in one workspace never kills a shared dependency another workspace is actively using. |
 | `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`, `timeout`, `restart`, `stopTimeout`, `dir`, `requires`, `containerName`, `scope`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. `env:` values shown redacted, same as `--dry-run`. `dir:` is always included resolved, even when inferred (never silently implicit — see "Reliability"). |
 | `devx --help` / `devx run <name> --help` / `devx <name> --help` | Generated from the manifest, Cobra-style — see "`devx --help` follows standard CLI conventions" above. |
 | `devx validate` | Unchanged command, extended checks (all warnings, not errors): a task name colliding with a built-in command; `restart:` set on a non-`detached` task (meaningless — nothing to restart); two tasks resolving to the same port (see "Port-collision detection" under "Reliability"); a detached task with no port/readiness inferred and no `ready:`/`port:` written (see "Readiness" under "Inference"); a container-shaped `run:` with no parseable/overridden `containerName:` (see "Graceful stop, driver-aware" under "Reliability"). `timeout:` has no such check: it's valid on both one-shot recipes and detached tasks' `ready:` waits, so there's no task shape it's ever a mistake on. |
@@ -760,12 +776,22 @@ The manifest redesign is paired with an execution-model redesign so
 "adding a technology" stays a one-file change on the Go side too:
 
 ```go
+// Task is the resolved, post-inference shape consumed by the scheduler/
+// Driver — e.g. Detached here is always a concrete true/false because
+// inference has already run; the raw YAML-level type (populated by
+// Task's custom UnmarshalYAML) separately tracks which fields were
+// actually written in the manifest vs. defaulted/inferred, which is what
+// feeds the "written vs. inferred" distinction used by `devx validate`,
+// `--dry-run`, and `devx tasks --json`'s "dir: always shown resolved,
+// even when inferred" behavior described above.
 type Task struct {
     Name        string
     Deps        []string
     Run         string
     Ready       ReadyCheck
     Detached    bool
+    Desc        string
+    Group       string
     Env         map[string]string
     OS          []string // empty = all platforms
     Interactive bool
@@ -920,26 +946,53 @@ overhead parallelism for issues that don't need hard isolation:
      (falls back to the current directory name when not inside a
      worktree), overridable via `devx up --workspace <id>`.
    - A `${workspace}` template token, usable in `containerName:` and
-     anywhere `${VAR}` substitution already applies, so container/
-     network/volume names get it folded in automatically without the
-     manifest author doing string concatenation.
-   - Auto port allocation: when `port:` isn't pinned, devx picks a free
-     ephemeral port per workspace instead of a fixed one; when `port:`
-     *is* pinned, `devx validate` warns on cross-workspace collision
-     instead of silently double-binding.
+     anywhere `${VAR}` substitution already applies (see "Variables"
+     above), so container/network/volume names get it folded in
+     automatically without the manifest author doing string
+     concatenation.
+   - Auto port allocation is **opt-in, not retroactive magic**: devx
+     cannot safely rewrite a literal host port embedded in opaque `run:`
+     text (`docker run -p 5432:5432`, `--port 9000`) — it never parses
+     or edits `run:` beyond port/name *sniffing* for inference. Instead
+     devx exposes a `${port}` variable (same `${VAR}` substitution
+     mechanism, scoped per-workspace) that a manifest author references
+     explicitly — `run: ./bin/api --port ${port}` or `-p ${port}:5432`
+     — to get a free ephemeral port allocated per workspace instead of a
+     fixed one. A task that hardcodes a literal port with no `${port}`
+     reference is unaffected by workspaces at all; if two workspaces
+     both hit that same hardcoded port, `devx validate` warns on the
+     collision (as already described under "Inference") rather than
+     devx silently rewriting text it was never asked to control.
+     `${port}` is a separate, built-in token (same family as
+     `${workspace}`, not a user-defined `vars:` entry) — unrelated to
+     the existing `port:` field, since a task using `${port}` is
+     self-describing to the same sniffer that reads a literal port out
+     of `run:`, making an explicit `port:` override unnecessary for it.
    - A new `scope: shared | workspace` task field (default `workspace`).
      `shared` tasks (e.g. one Postgres everyone's issue branches point
      at) run once regardless of how many workspaces are active; a
      second `devx up` from another workspace recognizes it's already up
      and just waits on its `ready:` check instead of starting a second
-     copy.
+     copy. `${workspace}`/`${port}` on a `shared` task's fields is a
+     validation error — a shared resource resolving to a different name
+     or port per workspace would defeat the point of sharing it.
    - A new `devx workspace` subcommand: `list` (what's running, grouped
      by workspace id), `rm <id>` (tear down that workspace's containers/
      volumes and free its ports — including `shared`-scope tasks only if
      no other workspace still references them), and `devx ps
      --all-workspaces` to see everything across issues from any window.
-   - `.devx/` state is already cwd-relative, so per-worktree state
-     separation is free — no change needed there.
+   - **State**: per-task runtime state (logs, pids) stays `.devx/`,
+     cwd-relative exactly as today — free, no change. But workspace
+     bookkeeping that must be visible *across* worktrees (which
+     workspaces exist, `scope: shared` reference counts for `rm`/`down`,
+     `list`/`ps --all-workspaces`) can't live there, since each worktree
+     has its own `.devx/` with no visibility into siblings. It instead
+     lives at a path anchored to `git rev-parse --git-common-dir` — the
+     one directory every worktree of the same repo already shares —
+     e.g. `<git-common-dir>/devx/workspaces.json`. Still fully local,
+     file-based, no daemon/network service; just a shared location
+     instead of a per-worktree one for the state that's inherently
+     cross-worktree.
 
 This tier is explicitly **not** a security boundary: same kernel, PID
 namespace, and network stack, so two workspaces can still see/signal/
@@ -971,15 +1024,26 @@ shell command for every other task.
   the single entry, if `agents:` only has one) **interactively**
   (stdin/stdout passed straight through, same as `interactive: true`
   tasks — these are REPLs, not captured-output recipes), with cwd set to
-  that workspace's worktree and the same env resolution any task gets
-  (`.env`/`vars:`/process env), so the agent sees the same DB URLs etc.
-  the stack it's working against uses. No new execution primitive —
-  reuses the existing embedded-shell/interactive-passthrough path.
+  that workspace's worktree and the same `${VAR}` substitution applied
+  to its command text as `run:` gets. Env-wise it inherits exactly what
+  any devx-launched process does: the real OS process environment,
+  including `.env`/`.env.local` (loaded once into the whole process's
+  environment at startup — see "Variables" above) — **not** `vars:`
+  (textual substitution only, never exported as real env vars) and
+  not another task's `env:` (per-task only). In practice this means an
+  agent sees whatever secrets/config a repo already puts in `.env`, the
+  same as every other task does, with no special-casing needed. No new
+  execution primitive — reuses the existing embedded-shell/interactive-
+  passthrough path.
 - `devx workspace new <id> [--agent <name>]` — the actual "one command
-  to start an issue": creates the `git worktree`, runs `devx up
-  --workspace <id>`, then drops straight into the named agent. Chains
-  the two steps above so starting work on a new issue (worktree + stack
-  + agent) is one command instead of three.
+  to start an issue": creates the `git worktree` (destination
+  `../<repo-dir-name>-<id>`, new branch `<id>` off current `HEAD`;
+  errors instead of silently reusing/overwriting if that branch or path
+  already exists — use `devx workspace agent <id>` to re-attach to an
+  existing one), runs `devx up --workspace <id>`, then drops straight
+  into the named agent. Chains the two steps above so starting work on
+  a new issue (worktree + stack + agent) is one command instead of
+  three.
 - `devx workspace` (bare, no subcommand) — the "I'm already in the
   devcontainer, open a new terminal, go" entrypoint: shorthand for
   `devx workspace new` that fills in gaps interactively instead of
@@ -1186,12 +1250,14 @@ shape as part of landing this.
    > inherited env > `.env`/`.env.local` > `vars:` defaults — never
    written as literal secrets) and `os:` (skip on non-matching platforms,
    with dependents treated as satisfied) as task fields, enforced before
-   dispatching to a `Driver`; validation rejects `interactive: true` or
-   `sources:`/`generates:` combined with `detached: true`.
+   dispatching to a `Driver`; validation rejects `interactive: true`
+   combined with `detached: true`, and `generates:` (without a paired
+   one-shot task) combined with `detached: true` — `sources:` alone is
+   valid on detached tasks (see point 12 below).
 8. `interactive: true` support in `processDriver`/`commandDriver`:
    attach stdin/stdout/stderr directly instead of capturing for `logs`.
-9. `sources:`/`generates:` glob matching + mtime comparison, gating
-   whether `commandDriver`/`processDriver` actually runs a task's recipe
+9. `sources:`/`generates:` glob matching + mtime comparison on one-shot
+   tasks, gating whether `commandDriver` actually runs a task's recipe
    or reports "up to date."
 10. `.env`/`.env.local` loading (root manifest's own directory only,
     not re-checked per `includes:`-file) into the inherited environment
@@ -1238,14 +1304,19 @@ shape as part of landing this.
 16. **Workspace support** (see "Parallel-issue workflows"): `scope:
     shared | workspace` field (default `workspace`); workspace id
     resolution (`--workspace <id>` flag, defaulting to the current `git
-    worktree` path when unset); `${workspace}` folded into the existing
-    `${VAR}` substitution pass for `containerName:`/generated network
-    and volume names; non-pinned ports allocated per-workspace from the
-    OS's ephemeral range instead of a single fixed default; `scope:
-    shared` tasks tracked with a reference count across workspaces so
-    `devx workspace rm <id>` only tears one down once nothing else
-    references it; `devx workspace list`/`rm` and `devx ps
-    --all-workspaces` as new `cmd_*.go` entrypoints.
+    worktree` path when unset); `${workspace}` and the new built-in
+    `${port}` token folded into the existing `${VAR}` substitution pass
+    (rejecting both on `scope: shared` tasks); `${port}` resolving to a
+    free ephemeral port allocated per workspace, fed back into the same
+    port-sniffing path `port:` already uses for inference — devx never
+    rewrites a hardcoded literal port it wasn't given a `${port}`
+    reference for; a workspace registry at
+    `<git-common-dir>/devx/workspaces.json` (shared across worktrees of
+    the same repo, still local/file-based, no daemon) tracking active
+    workspaces and `scope: shared` reference counts, read/written by
+    `up`, `down`, `workspace rm`/`clean`/`list`, and `ps
+    --all-workspaces` so `down`/`rm` only stop a shared task once no
+    other workspace still references it.
 17. **`agents:` map + agent attach** (see "Launching AI coding tools per
     workspace"): `devx workspace agent <id> [<name>]` resolves cwd to
     that workspace's worktree, resolves env the same way a task does,
