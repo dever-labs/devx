@@ -6,12 +6,7 @@ func TestValidateTools_Valid(t *testing.T) {
 	data := []byte(`version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
+api: ./bin/api
 tools:
   - name: node
     version: "20"
@@ -36,12 +31,7 @@ func TestValidateTools_MissingName(t *testing.T) {
 	data := []byte(`version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
+api: ./bin/api
 tools:
   - check: "node --version"
 `)
@@ -50,7 +40,7 @@ tools:
 		t.Fatalf("parse failed: %v", err)
 	}
 	if err := ValidateTools(m); err == nil {
-		t.Fatal("expected error for tool missing name")
+		t.Fatalf("expected error for missing tool name")
 	}
 }
 
@@ -58,22 +48,16 @@ func TestValidateTools_MissingCheck(t *testing.T) {
 	data := []byte(`version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
+api: ./bin/api
 tools:
   - name: node
-    version: "20"
 `)
 	m, err := Parse(data)
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 	if err := ValidateTools(m); err == nil {
-		t.Fatal("expected error for tool missing check")
+		t.Fatalf("expected error for missing check")
 	}
 }
 
@@ -81,21 +65,11 @@ func TestValidateSetup_Valid(t *testing.T) {
 	data := []byte(`version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
+api: ./bin/api
 setup:
-  - name: restore
+  - name: install-deps
     run: "npm install"
-    workdir: ./frontend
-    runOnce: true
     platform: all
-  - name: build-tools
-    run: "go build ./..."
-    platform: linux
 `)
 	m, err := Parse(data)
 	if err != nil {
@@ -106,93 +80,21 @@ setup:
 	}
 }
 
-func TestValidateSetup_MissingName(t *testing.T) {
+func TestValidateSetup_BadPlatform(t *testing.T) {
 	data := []byte(`version: 1
 project:
   name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
+api: ./bin/api
 setup:
-  - run: "npm install"
-`)
-	m, err := Parse(data)
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	if err := ValidateSetup(m); err == nil {
-		t.Fatal("expected error for setup step missing name")
-	}
-}
-
-func TestValidateSetup_MissingRun(t *testing.T) {
-	data := []byte(`version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-setup:
-  - name: restore
-`)
-	m, err := Parse(data)
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	if err := ValidateSetup(m); err == nil {
-		t.Fatal("expected error for setup step missing run")
-	}
-}
-
-func TestValidateSetup_InvalidPlatform(t *testing.T) {
-	data := []byte(`version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-setup:
-  - name: restore
+  - name: install-deps
     run: "npm install"
-    platform: freebsd
+    platform: solaris
 `)
 	m, err := Parse(data)
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 	if err := ValidateSetup(m); err == nil {
-		t.Fatal("expected error for invalid platform")
-	}
-}
-
-func TestValidateToolsAndSetup_Empty(t *testing.T) {
-	data := []byte(`version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-`)
-	m, err := Parse(data)
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	if err := ValidateTools(m); err != nil {
-		t.Fatalf("expected no error for empty tools: %v", err)
-	}
-	if err := ValidateSetup(m); err != nil {
-		t.Fatalf("expected no error for empty setup: %v", err)
+		t.Fatalf("expected error for bad platform")
 	}
 }

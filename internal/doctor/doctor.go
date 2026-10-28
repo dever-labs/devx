@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	goruntime "runtime"
@@ -12,12 +11,12 @@ import (
 	"strings"
 
 	"github.com/dever-labs/devx/internal/config"
-	"github.com/dever-labs/devx/internal/k8s"
 	"github.com/dever-labs/devx/internal/localai"
 	"github.com/dever-labs/devx/internal/runtime"
 	"github.com/dever-labs/devx/internal/runtime/docker"
 	"github.com/dever-labs/devx/internal/runtime/podman"
 	"github.com/dever-labs/devx/internal/setup"
+	"github.com/dever-labs/devx/internal/task"
 )
 
 type Options struct {
@@ -75,13 +74,8 @@ func Run(ctx context.Context, opts Options) Report {
 	}
 
 	if opts.Manifest != nil {
-		checks = append(checks, checkPortConflicts(opts.Manifest))
-		if opts.Manifest.Registry.Prefix != "" {
-			checks = append(checks, checkRegistry(opts.Manifest.Registry.Prefix))
-		}
-		if requiresK8s(opts.Manifest) {
-			checks = append(checks, checkKubectl())
-		}
+		checks = append(checks, checkPortConflicts(opts.Manifest)...)
+		checks = append(checks, checkTaskRequires(opts.Manifest)...)
 		// Check tools declared in the manifest.
 		toolChecks := checkTools(ctx, opts.Manifest, opts.Fix)
 		checks = append(checks, toolChecks...)
@@ -189,66 +183,65 @@ func detectCompose(ctx context.Context, runtimeName string) Check {
 	}
 }
 
-func checkPortConflicts(manifest *config.Manifest) Check {
-	ports := map[string][]string{}
-	for _, prof := range manifest.Profiles {
-		for name, svc := range prof.Services {
-			for _, port := range svc.Ports {
-				host := strings.Split(port, ":")[0]
-				ports[host] = append(ports[host], name)
-			}
+func checkPortConflicts(manifest *config.Manifest) []Check {
+	ports := map[int][]string{}
+	for name, t := range manifest.Tasks {
+		et, err := task.Resolve(t, task.NewResolver(nil, nil, t.ScopeVars))
+		if err != nil || et.Port == 0 {
+			continue
 		}
-		for name, dep := range prof.Deps {
-			for _, port := range dep.Ports {
-				host := strings.Split(port, ":")[0]
-				ports[host] = append(ports[host], name)
-			}
-		}
+		ports[et.Port] = append(ports[et.Port], name)
 	}
 
+	var checks []Check
 	var conflicts []string
-	for host, services := range ports {
-		if len(services) > 1 {
-			conflicts = append(conflicts, fmt.Sprintf("port %s used by %s", host, strings.Join(services, ", ")))
+	for port, names := range ports {
+		if len(names) > 1 {
+			sort.Strings(names)
+			conflicts = append(conflicts, fmt.Sprintf("port %d used by %s", port, strings.Join(names, ", ")))
 		}
 	}
-
+	sort.Strings(conflicts)
 	if len(conflicts) == 0 {
-		return Check{Name: "Ports", Status: "PASS", Detail: "no duplicate ports"}
+		checks = append(checks, Check{Name: "Ports", Status: "PASS", Detail: "no duplicate ports"})
+	} else {
+		checks = append(checks, Check{Name: "Ports", Status: "WARN", Detail: strings.Join(conflicts, "; ")})
 	}
-
-	return Check{Name: "Ports", Status: "WARN", Detail: strings.Join(conflicts, "; ")}
+	return checks
 }
 
-func checkRegistry(prefix string) Check {
-	if os.Getenv("DEVX_OFFLINE") == "1" {
-		return Check{Name: "Registry", Status: "WARN", Detail: "offline mode enabled"}
-	}
-
-	domain := strings.Split(prefix, "/")[0]
-	_, err := net.LookupHost(domain)
-	if err != nil {
-		return Check{Name: "Registry", Status: "WARN", Detail: "registry not reachable"}
-	}
-
-	return Check{Name: "Registry", Status: "PASS", Detail: "registry reachable"}
-}
-
-func requiresK8s(manifest *config.Manifest) bool {
-	for _, profile := range manifest.Profiles {
-		if profile.Runtime == "k8s" {
-			return true
+// checkTaskRequires verifies every requires: binary declared by any task
+// is available on PATH, surfacing "'web' needs 'docker', which isn't
+// installed" instead of only devx's own tool checks.
+func checkTaskRequires(manifest *config.Manifest) []Check {
+	var checks []Check
+	missing := map[string][]string{}
+	seen := map[string]bool{}
+	for name, t := range manifest.Tasks {
+		for _, bin := range t.Requires {
+			key := bin
+			if _, err := exec.LookPath(bin); err != nil {
+				missing[key] = append(missing[key], name)
+			} else {
+				seen[key] = true
+			}
 		}
 	}
-	return false
-}
-
-func checkKubectl() Check {
-	if err := k8s.DetectKubectl(); err != nil {
-		return Check{Name: "kubectl", Status: "WARN", Detail: "kubectl not found"}
+	for bin, names := range missing {
+		sort.Strings(names)
+		checks = append(checks, Check{
+			Name:   fmt.Sprintf("Requires: %s", bin),
+			Status: "FAIL",
+			Detail: fmt.Sprintf("%s needs %q, which isn't installed", strings.Join(names, ", "), bin),
+		})
 	}
-
-	return Check{Name: "kubectl", Status: "PASS", Detail: "kubectl available"}
+	for bin := range seen {
+		if _, alreadyReported := missing[bin]; alreadyReported {
+			continue
+		}
+		checks = append(checks, Check{Name: fmt.Sprintf("Requires: %s", bin), Status: "PASS"})
+	}
+	return checks
 }
 
 // checkDevcontainerCLI verifies the @devcontainers/cli npm package is installed.
@@ -282,10 +275,10 @@ func checkAI() []Check {
 
 	// Check the AI tool binary exists.
 	toolBin := map[string]string{
-		"aider":      "aider",
+		"aider":       "aider",
 		"claude-code": "claude",
-		"codex":      "codex",
-		"gh-copilot": "gh",
+		"codex":       "codex",
+		"gh-copilot":  "gh",
 	}
 	if bin, ok := toolBin[cfg.Tool]; ok {
 		if _, lookErr := exec.LookPath(bin); lookErr != nil {
@@ -321,4 +314,3 @@ func checkAI() []Check {
 
 	return checks
 }
-

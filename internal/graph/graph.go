@@ -9,7 +9,6 @@ import (
 
 type Node struct {
 	Name      string
-	Kind      string
 	DependsOn []string
 }
 
@@ -17,32 +16,17 @@ type Graph struct {
 	Nodes map[string]Node
 }
 
-func Build(profile *config.Profile) (*Graph, error) {
-	nodes := make(map[string]Node)
-
-	if profile == nil {
-		return &Graph{Nodes: nodes}, nil
-	}
-
-	for name, svc := range profile.Services {
+// Build constructs a dependency graph directly from a Manifest's resolved,
+// namespaced Tasks map (see config.Load) — the single scheduler for every
+// task, including across includes: boundaries.
+func Build(tasks map[string]config.Task) (*Graph, error) {
+	nodes := make(map[string]Node, len(tasks))
+	for name, t := range tasks {
 		nodes[name] = Node{
 			Name:      name,
-			Kind:      "service",
-			DependsOn: append([]string{}, svc.DependsOn...),
+			DependsOn: append([]string{}, t.Deps...),
 		}
 	}
-
-	for name := range profile.Deps {
-		if _, ok := nodes[name]; ok {
-			return nil, fmt.Errorf("name '%s' is used by both service and dep", name)
-		}
-		nodes[name] = Node{
-			Name:      name,
-			Kind:      "dep",
-			DependsOn: nil,
-		}
-	}
-
 	return &Graph{Nodes: nodes}, nil
 }
 
@@ -61,6 +45,8 @@ func (h *stringHeap) Pop() any {
 	return x
 }
 
+// TopoSort returns a deterministic topological order of g's nodes, or an
+// error on an unknown dependency or a cycle.
 func TopoSort(g *Graph) ([]string, error) {
 	if g == nil {
 		return nil, nil
@@ -69,8 +55,10 @@ func TopoSort(g *Graph) ([]string, error) {
 	indegree := map[string]int{}
 	adj := map[string][]string{}
 
-	for name, node := range g.Nodes {
+	for name := range g.Nodes {
 		indegree[name] = 0
+	}
+	for name, node := range g.Nodes {
 		for _, dep := range node.DependsOn {
 			adj[dep] = append(adj[dep], name)
 		}
@@ -78,7 +66,7 @@ func TopoSort(g *Graph) ([]string, error) {
 
 	for name, node := range g.Nodes {
 		for _, dep := range node.DependsOn {
-			if _, ok := indegree[dep]; !ok {
+			if _, ok := g.Nodes[dep]; !ok {
 				return nil, fmt.Errorf("unknown dependency '%s' for '%s'", dep, name)
 			}
 			indegree[name]++
@@ -111,4 +99,34 @@ func TopoSort(g *Graph) ([]string, error) {
 	}
 
 	return order, nil
+}
+
+// Closure returns the transitive set of names reachable by following
+// DependsOn from each of the given roots (inclusive of the roots
+// themselves) — used for partial `up`/`run <name...>` invocations.
+func Closure(g *Graph, roots []string) (map[string]bool, error) {
+	seen := map[string]bool{}
+	var visit func(name string) error
+	visit = func(name string) error {
+		if seen[name] {
+			return nil
+		}
+		node, ok := g.Nodes[name]
+		if !ok {
+			return fmt.Errorf("unknown task '%s'", name)
+		}
+		seen[name] = true
+		for _, dep := range node.DependsOn {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, r := range roots {
+		if err := visit(r); err != nil {
+			return nil, err
+		}
+	}
+	return seen, nil
 }

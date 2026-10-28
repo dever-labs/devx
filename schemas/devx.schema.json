@@ -1,8 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "devx manifest",
+  "description": "devx.yaml is a flat map of task names to task definitions, plus a handful of reserved top-level keys (version, project, ai, tools, setup, vars, includes, agents). Any other top-level key is a task name. See docs/manifest.md and docs/design/task-executor-refactor.md.",
   "type": "object",
-  "required": ["version", "project", "profiles"],
+  "required": ["version", "project"],
   "properties": {
     "version": {
       "type": "integer",
@@ -10,21 +11,29 @@
     },
     "project": {
       "type": "object",
-      "required": ["name", "defaultProfile"],
+      "required": ["name"],
       "properties": {
-        "name": {"type": "string"},
-        "defaultProfile": {"type": "string"}
+        "name": { "type": "string" }
       }
     },
-    "registry": {
+    "vars": {
       "type": "object",
-      "properties": {
-        "prefix": {"type": "string"}
-      }
+      "description": "Plain textual ${VAR} substitution defaults. Lowest priority in the CLI override > inherited env > .env/.env.local > vars: chain.",
+      "additionalProperties": { "type": "string" }
+    },
+    "includes": {
+      "type": "object",
+      "description": "Merges another devx.yaml's tasks into this one's graph, namespaced as \"<name>:<task>\". Not a recursive sub-process per file — one flat merged graph.",
+      "additionalProperties": { "type": "string" }
+    },
+    "agents": {
+      "type": "object",
+      "description": "Named shell commands launchable via 'devx workspace agent <name>'.",
+      "additionalProperties": { "type": "string" }
     },
     "ai": {
       "type": "object",
-      "description": "Optional AI configuration used for automatic connection string detection (dep connect blocks) and 'devx export' deployment generation. Credentials are read from environment variables — never stored in devx.yaml.",
+      "description": "Optional AI configuration used by 'devx ai'. Credentials are read from environment variables — never stored in devx.yaml.",
       "required": ["provider", "model"],
       "properties": {
         "provider": {
@@ -39,96 +48,134 @@
         "baseURL": {
           "type": "string",
           "description": "Override the API endpoint. Required for azure-openai. Optional for ollama (default: http://localhost:11434)."
-        }
-      }
-    },
-    "profiles": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "runtime": {
-            "type": "string",
-            "enum": ["compose", "k8s"]
-          },
-          "services": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "image": {"type": "string"},
-                "build": {
-                  "type": "object",
-                  "properties": {
-                    "context": {"type": "string"},
-                    "dockerfile": {"type": "string"}
-                  }
-                },
-                "ports": {"type": "array", "items": {"type": "string"}},
-                "env": {"type": "object", "additionalProperties": {"type": "string"}},
-                "command": {"type": "array", "items": {"type": "string"}},
-                "workdir": {"type": "string"},
-                "mount": {"type": "array", "items": {"type": "string"}},
-                "dependsOn": {"type": "array", "items": {"type": "string"}},
-                "health": {
-                  "type": "object",
-                  "properties": {
-                    "httpGet": {"type": "string"},
-                    "interval": {"type": "string"},
-                    "retries": {"type": "integer"}
-                  }
-                }
-              }
-            }
-          },
-          "deps": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "description": "Provider type (e.g. postgres, redis). When set, devx downloads the provider binary for health checks and connection string injection. Provider source defaults to devx-labs/<kind>."
-                },
-                "source": {
-                  "type": "string",
-                  "description": "GitHub org/name of the provider, e.g. my-org/postgres. Defaults to devx-labs/<kind> when omitted. Only needed to override the default provider source."
-                },
-                "version": {
-                  "type": "string",
-                  "description": "Provider version. Convention: major = supported dependency major version. Example: '16.1.0' = provider for PostgreSQL 16, provider release 1.0. Required when kind is set."
-                },
-                "image": {
-                  "type": "string",
-                  "description": "The OCI image to run. Optional when kind is set — the provider's defaultImage is used if omitted. Explicit image always wins over provider default."
-                },
-                "env": {"type": "object", "additionalProperties": {"type": "string"}},
-                "ports": {"type": "array", "items": {"type": "string"}},
-                "volume": {"type": "string"},
-                "connect": {
-                  "type": "array",
-                  "description": "Services to inject connection environment variables into. devx resolves the env var names either via explicit mapping or AI-assisted detection.",
-                  "items": {
-                    "type": "object",
-                    "required": ["service"],
-                    "properties": {
-                      "service": {
-                        "type": "string",
-                        "description": "Name of the service to inject connection env vars into."
-                      },
-                      "env": {
-                        "type": "object",
-                        "additionalProperties": {"type": "string"},
-                        "description": "Explicit env var mapping. Values support template variables: ${host}, ${port}, and any key from the dep's own env block (e.g. ${POSTGRES_PASSWORD}). If omitted and AI is configured, devx detects the right names automatically by scanning the service's build context."
-                      }
-                    }
-                  }
-                }
-              }
+        },
+        "local": {
+          "type": "object",
+          "description": "Local inference backend configuration used by 'devx ai setup/status'.",
+          "properties": {
+            "backend": {
+              "type": "string",
+              "enum": ["mlx", "ollama", "auto"],
+              "description": "auto picks MLX on Apple Silicon and Ollama elsewhere."
+            },
+            "model": { "type": "string" },
+            "autocompleteModel": {
+              "type": "string",
+              "description": "Fast model used for tab completion. Defaults to qwen2.5-coder:14b."
             }
           }
         }
       }
+    },
+    "tools": {
+      "type": "array",
+      "description": "Required SDKs, runtimes, and CLI tools. Checked by 'devx doctor', installed by 'devx setup' (or 'devx doctor --fix').",
+      "items": {
+        "type": "object",
+        "required": ["name", "check"],
+        "properties": {
+          "name": { "type": "string" },
+          "version": { "type": "string", "description": "Informational, shown in doctor output." },
+          "check": { "type": "string", "description": "Shell command to verify installation." },
+          "install": {
+            "type": "object",
+            "properties": {
+              "windows": { "type": "string" },
+              "macos": { "type": "string" },
+              "linux": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "setup": {
+      "type": "array",
+      "description": "Ordered host-side commands run by 'devx setup' after tool installation.",
+      "items": {
+        "type": "object",
+        "required": ["name", "run"],
+        "properties": {
+          "name": { "type": "string" },
+          "run": { "type": "string" },
+          "workdir": { "type": "string", "description": "Defaults to cwd." },
+          "runOnce": { "type": "boolean", "description": "Skip if hash of run: matches the last successful run." },
+          "platform": { "type": "string", "enum": ["all", "windows", "linux", "macos"], "default": "all" }
+        }
+      }
     }
+  },
+  "additionalProperties": {
+    "description": "Every other top-level key is a task name. A task is either a bare string (shorthand for {run: <string>}) or an object with the fields below.",
+    "oneOf": [
+      { "type": "string" },
+      {
+        "type": "object",
+        "properties": {
+          "run": { "type": "string", "description": "Shell command executed via the system shell (sh -c / cmd /C)." },
+          "desc": { "type": "string", "description": "One-line description shown in 'devx tasks'." },
+          "deps": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Task names (or \"<include-namespace>:<task>\") that must complete/become ready before this task runs."
+          },
+          "dir": { "type": "string", "description": "Working directory for run:, relative to the defining devx.yaml's own directory. Defaults to that directory." },
+          "env": { "type": "object", "additionalProperties": { "type": "string" } },
+          "detached": {
+            "type": "boolean",
+            "description": "True starts the task in the background and continues the graph once it's ready; inferred from run: text (docker run -d, &, etc.) when omitted."
+          },
+          "interactive": {
+            "type": "boolean",
+            "description": "True attaches the task directly to the terminal (stdin/stdout/stderr), skipping readiness/parallelism — for one task run alone, e.g. 'devx run shell'."
+          },
+          "ready": {
+            "type": "object",
+            "description": "How devx decides a detached task is ready. Exactly one of http, tcp, or cmd. When omitted, readiness is inferred from run: text.",
+            "properties": {
+              "http": { "type": "string", "description": "URL polled until it returns a 2xx/3xx status." },
+              "tcp": { "type": "string", "description": "host:port polled until the socket accepts a connection." },
+              "cmd": { "type": "string", "description": "Shell command polled until it exits 0." }
+            }
+          },
+          "port": { "type": "integer", "description": "Port this task listens on, for devx's port-collision checks. Inferred from run: text when omitted." },
+          "containerName": { "type": "string", "description": "Overrides the container name devx infers from run: (used by devx down/logs/exec/status). Set explicitly if the name can't be parsed from run:." },
+          "requires": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Binaries that must be on PATH for this task to run — checked by 'devx doctor'."
+          },
+          "sources": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Glob patterns. Combined with generates: to skip re-running a one-shot task when its outputs are newer than its inputs."
+          },
+          "generates": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Glob patterns of files this task produces. See sources:."
+          },
+          "os": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["linux", "darwin", "windows"] },
+            "description": "Restricts this task to the listed OSes; skipped (not an error) on any other OS."
+          },
+          "timeout": { "type": "string", "description": "Duration string (e.g. \"30s\", \"2m\") after which devx kills the task and treats it as failed." },
+          "stopTimeout": { "type": "string", "description": "Duration devx waits after SIGTERM before sending SIGKILL on 'devx down'. Defaults to 10s." },
+          "restart": {
+            "type": "string",
+            "enum": ["never", "on-failure", "always"],
+            "description": "Only meaningful for detached tasks. Defaults to never."
+          },
+          "shell": { "type": "string", "description": "Overrides the shell used to run run: (defaults to sh -c on Unix, cmd /C on Windows)." },
+          "group": { "type": "string", "description": "Logical grouping used by 'devx up --group <name>' to run a subset of the graph." },
+          "scope": {
+            "type": "string",
+            "enum": ["workspace", "shared"],
+            "default": "workspace",
+            "description": "shared tasks may not reference ${workspace}/${port}-style per-workspace substitutions — they're meant to be started once and shared across workspaces."
+          }
+        }
+      }
+    ]
   }
 }

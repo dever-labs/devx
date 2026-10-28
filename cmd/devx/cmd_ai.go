@@ -398,7 +398,7 @@ func runAISetup(args []string) error {
 		if opts.AutocompleteModel == "" {
 			opts.AutocompleteModel = saved.AutocompleteModel
 		}
-	} else if manifest, err := loadManifestOnly(); err == nil && manifest.AI != nil && manifest.AI.Local != nil {
+	} else if manifest, err := loadManifest(); err == nil && manifest.AI != nil && manifest.AI.Local != nil {
 		local := manifest.AI.Local
 		if opts.Backend == "" {
 			opts.Backend = local.Backend

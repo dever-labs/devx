@@ -4,90 +4,24 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 
-	"github.com/dever-labs/devx/internal/config"
-	"github.com/dever-labs/devx/internal/k8s"
-	"github.com/dever-labs/devx/internal/lock"
-	"github.com/dever-labs/devx/internal/runtime"
+	"github.com/dever-labs/devx/internal/task"
 )
 
 func runUp(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("up", flag.ExitOnError)
-	profile := fs.String("profile", "", "Profile to use")
-	build := fs.Bool("build", false, "Build images")
-	pull := fs.Bool("pull", false, "Always pull images")
-	noTelemetry := fs.Bool("no-telemetry", false, "Disable telemetry stack")
-	_ = fs.Parse(args)
-
-	manifest, profName, prof, err := loadProfile(*profile)
-	if err != nil {
+	fs := flag.NewFlagSet("up", flag.ContinueOnError)
+	detach := fs.Bool("detach", false, "Start the stack and return immediately instead of attaching to logs")
+	fs.BoolVar(detach, "d", false, "Shorthand for --detach")
+	dryRun := fs.Bool("dry-run", false, "Print the resolved graph and commands, execute nothing")
+	keepGoing := fs.Bool("keep-going", false, "Continue unrelated branches of the graph on failure")
+	group := fs.String("group", "", "Only tasks whose group: matches (+ their deps)")
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	rt, err := selectRuntime(ctx)
-	if err != nil {
-		return err
-	}
+	names, cliVars := parseCLIVars(fs.Args())
 
-	lockfile, _ := lock.Load(lockFile)
-
-	ensureProviders(manifest, prof)
-
-	if err := ensureDevxDir(); err != nil {
-		return err
-	}
-
-	runtimeMode := profileRuntime(prof)
-	if runtimeMode == "k8s" {
-		return runUpK8s(ctx, manifest, profName, prof)
-	}
-
-	composePath := filepath.Join(devxDir, composeFile)
-	enableTelemetry := !*noTelemetry
-	if err := writeCompose(composePath, manifest, profName, prof, lockfile, enableTelemetry); err != nil {
-		return err
-	}
-
-	if err := rt.Up(ctx, composePath, manifest.Project.Name, runtime.UpOptions{Build: *build, Pull: *pull}); err != nil {
-		return err
-	}
-
-	if err := waitForHealth(prof); err != nil {
-		return err
-	}
-
-	var bgCmds []*exec.Cmd
-	if len(prof.Hooks.AfterUp) > 0 {
-		fmt.Println("Running afterUp hooks...")
-		var err error
-		bgCmds, err = runHooks(ctx, rt, composePath, manifest.Project.Name, prof.Hooks.AfterUp)
-		if err != nil {
-			return err
-		}
-	}
-
-	if err := writeState(state{Profile: profName, Runtime: rt.Name(), Telemetry: enableTelemetry}); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write state: %v\n", err)
-	}
-
-	fmt.Println("Environment is up")
-	printLinks(ctx, rt, composePath, manifest.Project.Name)
-
-	if len(bgCmds) > 0 {
-		fmt.Println("\nBackground processes running — Ctrl+C to stop.")
-		waitForBackground(bgCmds)
-	}
-
-	return nil
-}
-
-func runUpK8s(ctx context.Context, manifest *config.Manifest, profName string, prof *config.Profile) error {
-	prof = resolveDepImages(prof)
-	prof = resolveConnections(manifest, prof)
-	output, err := k8s.Render(manifest, profName, prof, "")
+	m, err := loadValidManifest()
 	if err != nil {
 		return err
 	}
@@ -95,19 +29,31 @@ func runUpK8s(ctx context.Context, manifest *config.Manifest, profName string, p
 	if err := ensureDevxDir(); err != nil {
 		return err
 	}
-	path := filepath.Join(devxDir, k8sFile)
-	if err := os.WriteFile(path, []byte(output), 0600); err != nil {
+
+	sched, err := newScheduler(m, cliVars, task.Options{
+		DryRun:    *dryRun,
+		KeepGoing: *keepGoing,
+		Group:     *group,
+		Writer: func(name, msg string) {
+			fmt.Printf("[%s] %s\n", name, msg)
+		},
+	})
+	if err != nil {
 		return err
 	}
 
-	if err := k8s.Apply(ctx, path); err != nil {
+	if err := sched.Up(ctx, names); err != nil {
 		return err
 	}
 
-	if err := writeState(state{Profile: profName, Runtime: "k8s", Telemetry: false}); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write state: %v\n", err)
+	if !*dryRun {
+		fmt.Println("\nEnvironment is up.")
 	}
 
-	fmt.Println("Kubernetes resources applied")
-	return nil
+	if *detach || *dryRun {
+		return nil
+	}
+
+	fmt.Println("Attached — streaming logs, Ctrl-C to stop the stack (devx down).")
+	return attachAndWaitForInterrupt(ctx, sched)
 }

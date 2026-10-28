@@ -2,180 +2,82 @@ version: 1
 
 project:
   name: my-app
-  defaultProfile: local
 
-registry:
-  prefix: ""  # e.g. myregistry.azurecr.io/my-app
+vars:
+  DB_PASSWORD: postgres
+  DB_PORT: "5432"
+  API_PORT: "8080"
 
-profiles:
+# ── Database, built from an official image ──────────────────────────────────
+db:
+  desc: Postgres for local dev
+  run: >-
+    docker run --rm -d --name my-app-db
+    -p ${DB_PORT}:5432
+    -e POSTGRES_PASSWORD=${DB_PASSWORD}
+    -e POSTGRES_DB=appdb
+    -v my-app-db-data:/var/lib/postgresql/data
+    postgres:16
+  ready:
+    tcp: localhost:${DB_PORT}
 
-  # ── local ─────────────────────────────────────────────────────────────────
-  # Built from source. Run with: devx up
-  local:
-    runtime: compose
-    services:
-      api:
-        build:
-          context: ./src/api
-          dockerfile: Dockerfile
-        ports:
-          - "8080:80"
-        env:
-          APP_ENV: development
-          DB_HOST: db
-          DB_PORT: "5432"
-          DB_NAME: appdb
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-          REDIS_URL: redis://cache:6379
-        dependsOn:
-          - db
-          - cache
-        health:
-          httpGet: http://localhost:8080/health
-          interval: 5s
-          retries: 12
+# ── Cache ────────────────────────────────────────────────────────────────────
+cache:
+  desc: Redis for local dev
+  run: docker run --rm -d --name my-app-cache -p 6379:6379 redis:7
 
-      worker:
-        build:
-          context: ./src/worker
-          dockerfile: Dockerfile
-        env:
-          APP_ENV: development
-          DB_HOST: db
-          DB_PASSWORD: postgres
-        dependsOn:
-          - db
-          - cache
+# ── One-shot DB migration, gated on the db being ready ──────────────────────
+migrate:
+  desc: Apply database migrations
+  deps: [db]
+  run: echo "no migrations yet — add your migration tool's command here"
 
-    deps:
-      db:
-        kind: postgres
-        version: "16"
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-        volume: "db-data:/var/lib/postgresql/data"
+# ── API, built from source ──────────────────────────────────────────────────
+api:
+  desc: API server (built from ./src/api)
+  deps: [migrate, cache]
+  dir: ./src/api
+  run: >-
+    docker build -t my-app-api . &&
+    docker run --rm -d --name my-app-api
+    -p ${API_PORT}:80
+    -e APP_ENV=development
+    -e DB_HOST=host.docker.internal
+    -e DB_PORT=${DB_PORT}
+    -e DB_NAME=appdb
+    -e DB_USER=postgres
+    -e DB_PASSWORD=$DB_PASSWORD
+    my-app-api
+  env:
+    DB_PASSWORD: ${DB_PASSWORD}
+  ready:
+    http: http://localhost:${API_PORT}/
 
-      cache:
-        kind: redis
-        version: "7"
-        ports:
-          - "6379:6379"
+# ── Worker, built from source, no exposed port ──────────────────────────────
+worker:
+  desc: Background worker (built from ./src/worker)
+  deps: [migrate, cache]
+  dir: ./src/worker
+  run: >-
+    docker build -t my-app-worker . &&
+    docker run --rm -d --name my-app-worker
+    -e APP_ENV=development
+    -e DB_HOST=host.docker.internal
+    -e DB_PASSWORD=$DB_PASSWORD
+    my-app-worker
+  env:
+    DB_PASSWORD: ${DB_PASSWORD}
+  detached: true
+  ready:
+    cmd: docker inspect -f '{{.State.Running}}' my-app-worker
 
-    hooks:
-      afterUp:
-        - exec: "migrate up"
-          service: api
-        - run: "./scripts/seed-dev.sh"
-      beforeDown:
-        - exec: "migrate down"
-          service: api
+# ── Everyday dev tasks ───────────────────────────────────────────────────────
+build:
+  desc: Build the API and worker images without starting them
+  run: |
+    docker build -t my-app-api ./src/api
+    docker build -t my-app-worker ./src/worker
 
-  # ── ci ────────────────────────────────────────────────────────────────────
-  # Pre-built images. Run with: devx up --profile ci
-  ci:
-    runtime: compose
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:latest
-        env:
-          APP_ENV: test
-          DB_HOST: db
-          DB_PORT: "5432"
-          DB_NAME: appdb
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-        dependsOn:
-          - db
-
-    deps:
-      db:
-        kind: postgres
-        version: "16"
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-
-    hooks:
-      afterUp:
-        - exec: "migrate up"
-          service: api
-
-  # ── staging ───────────────────────────────────────────────────────────────
-  # Compose on a staging server. Run with: devx up --profile staging
-  staging:
-    runtime: compose
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:stable
-        ports:
-          - "80:8080"
-        env:
-          APP_ENV: staging
-          DB_HOST: db
-          DB_PASSWORD: "${DB_PASSWORD}"
-        dependsOn:
-          - db
-        health:
-          httpGet: http://localhost/health
-          interval: 10s
-          retries: 6
-
-    deps:
-      db:
-        kind: postgres
-        version: "16"
-        env:
-          POSTGRES_PASSWORD: "${DB_PASSWORD}"
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-        volume: "staging-db-data:/var/lib/postgresql/data"
-
-    hooks:
-      afterUp:
-        - exec: "migrate up"
-          service: api
-
-  # ── k8s ───────────────────────────────────────────────────────────────────
-  # Kubernetes via kubectl. Run with: devx up --profile k8s
-  k8s:
-    runtime: k8s
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:latest
-        ports:
-          - "80:8080"
-        env:
-          APP_ENV: production
-          DB_HOST: db
-          DB_PORT: "5432"
-          DB_NAME: appdb
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-        dependsOn:
-          - db
-
-      worker:
-        image: myregistry.azurecr.io/my-app/worker:latest
-        env:
-          APP_ENV: production
-          DB_HOST: db
-          DB_PASSWORD: postgres
-        dependsOn:
-          - db
-
-    deps:
-      db:
-        kind: postgres
-        version: "16"
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
+test:
+  desc: Run the project's test suite
+  run: echo "add your test command here"

@@ -1,373 +1,203 @@
 # devx.yaml reference
 
-`devx.yaml` is the single manifest file that describes your project's services, dependencies, and profiles.
+`devx.yaml` is a flat manifest of **tasks**. There is no `services:`/`deps:`/`profiles:`
+wrapper — every top-level key other than a small reserved set (`version`, `project`, `ai`,
+`tools`, `setup`, `vars`, `includes`, `agents`) *is* a task name, and its value is that
+task's definition.
+
+```yaml
+version: 1
+
+project:
+  name: my-app
+
+vars:
+  DB_PORT: "5432"
+
+db:
+  desc: Postgres for local dev
+  run: docker run --rm -d --name my-app-db -p ${DB_PORT}:5432 postgres:16
+  ready:
+    tcp: localhost:${DB_PORT}
+
+api:
+  desc: API server
+  deps: [db]
+  dir: ./src/api
+  run: docker build -t my-app-api . && docker run --rm -d --name my-app-api -p 8080:80 my-app-api
+  ready:
+    http: http://localhost:8080/
+```
+
+Run it with `devx up` (starts every task, respecting `deps:`), or a single task and its
+dependencies with `devx run api`. See `devx help` for the full command list.
 
 ---
 
 ## Top-level structure
 
+| Key | Type | Description |
+|---|---|---|
+| `version` | int | Always `1`. |
+| `project.name` | string | Project name. |
+| `vars` | map | Default `${VAR}` substitution values (see [Variable substitution](#variable-substitution)). |
+| `includes` | map | Merge another `devx.yaml`'s tasks into this graph (see [Includes](#includes)). |
+| `agents` | map | Named shell commands for the planned `devx workspace` feature (parallel per-branch workspaces with an AI coding agent auto-started on creation). Reserved and parsed today; not yet wired to a CLI command — see `docs/design/task-executor-refactor.md`. |
+| `ai` | object | Optional LLM provider config used by `devx ai`. See `docs/ai.md`-equivalent comments in `schemas/devx.schema.json`. Credentials always come from environment variables, never from `devx.yaml`. |
+| `tools` | list | Required CLI tools/SDKs, checked by `devx doctor`, installed by `devx setup`. |
+| `setup` | list | Ordered host-side commands run by `devx setup`. |
+| *(anything else)* | task | A task definition — see below. |
+
+---
+
+## Tasks
+
+A task is either a bare string (shorthand for `{run: <string>}`) or a mapping with any of
+the fields below.
+
 ```yaml
-version: 1
-
-project:
-  name: my-app
-  defaultProfile: local
-
-registry:
-  prefix: ""
-
-profiles:
-  local:
-    # ...
-  ci:
-    # ...
-  k8s:
-    runtime: k8s
-    # ...
+worker: ./worker --port 9000
 ```
 
-### `version`
+is shorthand for:
 
-Always `1`.
+```yaml
+worker:
+  run: ./worker --port 9000
+```
 
-### `project`
+(a plain string task and a one-field mapping are equivalent — the shorthand just saves the
+`run:` key for the simplest cases).
+
+### Field reference
 
 | Field | Type | Description |
 |---|---|---|
-| `name` | string | Project name — used as the Docker Compose project name |
-| `defaultProfile` | string | Profile used when `--profile` is not specified |
+| `run` | string | Shell command, executed via the system shell (`sh -c` on Linux/macOS, `cmd /C` on Windows). |
+| `desc` | string | One-line description shown in `devx tasks`. |
+| `deps` | list | Task names that must complete (one-shot) or become ready (detached) before this task starts. `devx up`/`devx run <name>` compute the transitive closure and run independent tasks in parallel, level by level. |
+| `dir` | string | Working directory for `run:`, relative to the `devx.yaml` that defines the task. Defaults to that file's own directory. |
+| `env` | map | Environment variables merged into the task's process environment (after `${VAR}` substitution). |
+| `detached` | bool | `true` starts the task in the background and moves on once it's ready, instead of waiting for it to exit. Inferred from `run:` (e.g. `docker run -d`, a trailing `&`, or a long-running dev-server pattern) when omitted — set explicitly to override a wrong guess. |
+| `interactive` | bool | `true` attaches the task directly to the terminal's stdin/stdout/stderr (e.g. a shell, a REPL) — only valid when running that one task alone (`devx run <name>`), not as part of a larger `devx up`. Cannot be combined with `detached: true`. |
+| `ready` | object | How devx decides a detached task has become ready — see [Readiness](#readiness). |
+| `port` | int | Port this task listens on, used for `devx validate`'s port-collision check. Inferred from `run:` (`-p`, `--port`, `--publish`) when omitted. |
+| `containerName` | string | Overrides the container name devx infers from `run:`, used by `devx down`/`logs`/`exec`/`status` to address the right container. Set explicitly if the name can't be parsed automatically. |
+| `requires` | list | Binaries that must be on `PATH` for this task to run — checked by `devx doctor`. |
+| `sources` / `generates` | list of globs | Skip re-running a one-shot task when every `generates:` file is newer than every `sources:` file (like a Makefile rule). `generates:` is invalid on a detached task. |
+| `os` | list | Restrict this task to `linux`/`darwin`/`windows`; skipped (not an error) on any other OS. |
+| `timeout` | duration string | Kill the task and treat it as failed if it runs longer than this (e.g. `"30s"`, `"2m"`). |
+| `stopTimeout` | duration string | How long `devx down` waits after `SIGTERM` before `SIGKILL`. Defaults to `10s`. |
+| `restart` | `never` \| `on-failure` \| `always` | Only meaningful on a detached task. Defaults to `never`. |
+| `shell` | string | Override the shell used to execute `run:`. |
+| `group` | string | Logical group name, used by `devx up --group <name>` to start a subset of the graph. |
+| `scope` | `workspace` \| `shared` | Defaults to `workspace`. A `shared` task may not reference `${workspace}`/`${port}`-style per-workspace substitutions, since it's meant to be started once and reused across workspaces (see the workspace/agents design). |
 
-### `registry`
+### Readiness
 
-| Field | Type | Description |
-|---|---|---|
-| `prefix` | string | Registry prefix prepended to all images (e.g. `myregistry.azurecr.io`). Leave empty for Docker Hub. |
+```yaml
+ready:
+  http: http://localhost:8080/health   # polled until it returns 2xx/3xx
+  # or
+  tcp: localhost:5432                  # polled until the socket accepts a connection
+  # or
+  cmd: docker inspect -f '{{.State.Running}}' my-app-db   # polled until it exits 0
+```
+
+Set at most one of `http`/`tcp`/`cmd`. When `ready:` is omitted entirely, devx infers a
+check from the task's `run:` text (an exposed port implies a TCP check against
+`localhost:<port>`). If nothing can be inferred and the task is detached, `devx validate`
+warns — add `ready:` or `port:` explicitly.
+
+### Variable substitution
+
+`${VAR}` in `run:`, `env:`, `ready:`, `dir:`, etc. is substituted before the task executes,
+in this precedence order (highest wins):
+
+1. `--var KEY=value` on the CLI (`devx up --var DB_PORT=5433`)
+2. The inherited process environment
+3. `.env` / `.env.local` in the project root
+4. The manifest's `vars:` block (or, for an included file's tasks, that file's own `vars:`
+   merged over the root's `vars:` — the included file's value wins on conflict)
+
+`$$` escapes to a literal `$`. An unbraced `$VAR` (no braces) is left untouched — only
+`${VAR}` is substituted, so `run: echo $HOME` passes `$HOME` straight through to the shell
+for the shell itself to expand, while `run: echo ${API_PORT}` is substituted by devx first.
+
+### Includes
+
+```yaml
+includes:
+  infra: ./infra/devx.yaml
+```
+
+merges every task from `./infra/devx.yaml` into this graph, namespaced as `infra:<task>`
+(e.g. `infra:db`). Reference it from `deps:` the same way: `deps: [infra:db]`. This is a
+flat merge, not a recursive sub-process — the included file's own `includes:` (if any) are
+not followed. Each included task's `${VAR}` substitution uses *that file's own* `vars:`
+merged over the root's `vars:` (the included file's value wins on conflict), so a shared
+`infra/devx.yaml` can be included by multiple projects with different root-level overrides.
 
 ---
 
-## Profiles
-
-Each key under `profiles` is a named environment. Profiles contain two sections:
-
-- `services` — your application containers
-- `deps` — infrastructure dependencies (databases, caches, etc.)
+## Tools and setup
 
 ```yaml
-profiles:
-  local:
-    services:
-      api:
-        # ...
-    deps:
-      db:
-        # ...
+tools:
+  - name: node
+    check: node --version
+    install:
+      macos: brew install node
+      linux: sudo apt-get install -y nodejs
+      windows: choco install nodejs
+
+setup:
+  - name: install dependencies
+    run: npm install
+    runOnce: true
 ```
 
-### `runtime`
-
-Set `runtime: k8s` on a profile to use `kubectl` instead of Docker Compose:
-
-```yaml
-profiles:
-  k8s:
-    runtime: k8s
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:latest
-```
-
-Omit `runtime` (or leave it empty) to use Docker Compose (default).
+`devx doctor` checks every `tools:` entry's `check:` command and reports missing tools;
+`devx setup` (or `devx doctor --fix`) runs each tool's `install:` command for the current
+OS, then runs `setup:` steps in order. A `runOnce: true` step is skipped on a later
+`devx setup` if its `run:` command's content hasn't changed since the last successful run.
 
 ---
 
-## Services
+## CLI commands
 
-Services are your application containers.
-
-```yaml
-services:
-  api:
-    image: myimage:tag
-    build:
-      context: ./src/api
-      dockerfile: Dockerfile
-    ports:
-      - "8080:80"
-    env:
-      DB_HOST: db
-      APP_ENV: development
-    command: ["./server", "--port", "8080"]
-    workdir: /app
-    mount:
-      - "./src/api:/app:ro"
-    dependsOn:
-      - db
-      - cache
-    health:
-      httpGet: http://localhost:8080/health
-      interval: 5s
-      retries: 10
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `image` | string | Docker image to use. Mutually exclusive with `build`. |
-| `build.context` | string | Build context path (relative to `devx.yaml`). |
-| `build.dockerfile` | string | Path to Dockerfile relative to `build.context`. Defaults to `Dockerfile`. |
-| `ports` | list | Port mappings in `"hostPort:containerPort"` format. |
-| `env` | map | Environment variables injected into the container. |
-| `command` | list | Override the container entrypoint command. |
-| `workdir` | string | Working directory inside the container. |
-| `mount` | list | Bind mounts in `"hostPath:containerPath[:options]"` format. Not supported in k8s render. |
-| `dependsOn` | list | Service or dep names that must start first. |
-| `health.httpGet` | string | URL polled after `devx up` until it returns 2xx. Blocks until healthy or timeout (2 min). |
-| `health.interval` | string | Poll interval for health check (default `5s`). |
-| `health.retries` | int | Maximum number of health check attempts. |
-
-> **`image` vs `build`:** Use `image` for pre-built images. Use `build` for services built from local source. When `build` is set, `image` is ignored for Compose but **must** be set for k8s rendering.
-
----
-
-## Deps
-
-Deps are managed infrastructure containers (databases, caches). devx handles the image and standard configuration for each `kind`.
-
-```yaml
-deps:
-  db:
-    kind: postgres
-    version: "16"
-    env:
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: appdb
-    ports:
-      - "5432:5432"
-    volume: "db-data:/var/lib/postgresql/data"
-
-  cache:
-    kind: redis
-    version: "7"
-    ports:
-      - "6379:6379"
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `kind` | string | Dependency type. See supported kinds below. |
-| `version` | string | Image tag / version of the dependency. |
-| `env` | map | Environment variables (e.g. credentials). |
-| `ports` | list | Port mappings. |
-| `volume` | string | Single named volume mount in `"volumeName:containerPath"` format. |
-
-### Supported dep kinds
-
-| Kind | Image | Notes |
-|---|---|---|
-| `postgres` | `postgres:<version>` | Set `POSTGRES_PASSWORD` and `POSTGRES_DB` in `env`. |
-| `redis` | `redis:<version>` | No required env vars. |
-
----
-
-## Health checks
-
-When a service has a `health.httpGet` URL, `devx up` polls it after containers start. The command blocks until all health checks pass (up to 2 minutes), then prints the service links.
-
-```yaml
-services:
-  api:
-    image: myimage:tag
-    health:
-      httpGet: http://localhost:8080/healthz
-```
-
-The URL must be reachable from the **host machine**, so use the published host port (not the container port).
-
----
-
-## Kubernetes
-
-When `runtime: k8s` is set, `devx render k8s` and `devx up/down` use `kubectl` instead of Docker Compose.
-
-**Constraints for k8s profiles:**
-
-- `build` services must also set `image` — devx does not build images for k8s.
-- `mount` (bind mounts) are not supported — use ConfigMaps or PersistentVolumes instead.
-- Deps are rendered as Deployments + Services, same as regular services.
-
-`devx render k8s --write` emits `.devx/k8s.yaml` with:
-- A `Deployment` for each service and dep
-- A `ClusterIP` Service for each container with ports defined
-
----
-
-## Hooks
-
-Hooks let you run commands at lifecycle points around `devx up` and `devx down`. Each hook is either an `exec` (runs inside a container) or a `run` (runs on the host). Hooks execute sequentially and stop on the first failure.
-
-```yaml
-profiles:
-  local:
-    hooks:
-      afterUp:
-        - exec: "migrate up"
-          service: api
-        - run: "./scripts/seed.sh"
-      beforeDown:
-        - exec: "migrate down"
-          service: api
-    services:
-      api:
-        image: myimage:tag
-```
-
-### Hook fields
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `exec` | string | one of exec/run | Command run inside `service` via `docker compose exec`. |
-| `service` | string | when exec | The service name to exec into. |
-| `run` | string | one of exec/run | Host shell command — runs via `sh -c` (Linux/macOS) or `cmd /c` (Windows). |
-
-### Hook lifecycle points
-
-| Key | When it runs |
+| Command | Description |
 |---|---|
-| `afterUp` | After all containers are up and health checks pass |
-| `beforeDown` | Before containers are stopped |
+| `devx up` | Run every task, respecting `deps:` — parallel within each dependency level. |
+| `devx up --group <name>` | Only start tasks with `group: <name>` (and their deps). |
+| `devx up --dry-run` | Print the planned execution order without running anything. |
+| `devx run <name>` | Run one task and its transitive `deps:` only. |
+| `devx run <name> --watch` | Re-run the task whenever its `sources:` globs change (polling, not inotify, in this release). |
+| `devx <name>` | Shorthand for `devx run <name>`. |
+| `devx down` | Stop detached tasks, in reverse dependency order. |
+| `devx status` | Show which detached tasks are currently running/ready. |
+| `devx logs <name>` / `devx logs` | Tail one task's logs, or all detached tasks'. |
+| `devx exec <name> -- <cmd>` | Run `<cmd>` inside a running container task. |
+| `devx tasks` / `devx tasks --json` | List every task with its description and inferred mode. |
+| `devx validate` | Check `devx.yaml` for structural errors and common mistakes (see below). |
+| `devx doctor` / `devx doctor --fix` | Check (and optionally install) `tools:`, and flag port collisions / missing `requires:` binaries. |
+| `devx setup` | Run `setup:` steps. |
+| `devx new <name>` | Append a new task skeleton to `devx.yaml`. |
+| `devx init` | Scaffold a starter `devx.yaml`. |
 
-### Common patterns
-
-**Database migrations** (exec into app container):
-```yaml
-hooks:
-  afterUp:
-    - exec: "migrate up"
-      service: api
-  beforeDown:
-    - exec: "migrate down"
-      service: api
-```
-
-**Seed data from a host script**:
-```yaml
-hooks:
-  afterUp:
-    - run: "./scripts/seed.sh"
-```
-
-**Multiple steps** (run in order, stop on first failure):
-```yaml
-hooks:
-  afterUp:
-    - exec: "migrate up"
-      service: api
-    - exec: "python manage.py loaddata fixtures/dev.json"
-      service: api
-    - run: "./scripts/notify-slack.sh"
-```
+`devx validate` additionally warns (and exits non-zero) on:
+- A task name colliding with a built-in command name (`devx <name>` would always run the
+  built-in, never the task).
+- A detached task with no inferrable `ready:`/`port:`.
+- A container task (`run:` contains `docker run`/`docker compose`/`podman run`) whose
+  container name couldn't be parsed and no `containerName:` override was set — `devx
+  down`/`exec`/`logs`/`status` would have nothing to act on.
+- Two tasks inferring (or declaring) the same port.
 
 ---
 
 ## Full example
 
-```yaml
-version: 1
-
-project:
-  name: my-app
-  defaultProfile: local
-
-registry:
-  prefix: ""
-
-profiles:
-  local:
-    services:
-      api:
-        build:
-          context: ./src/api
-        ports:
-          - "8080:80"
-        env:
-          APP_ENV: development
-          DB_HOST: db
-          DB_PORT: "5432"
-          DB_NAME: appdb
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-          REDIS_URL: redis://cache:6379
-        dependsOn:
-          - db
-          - cache
-        health:
-          httpGet: http://localhost:8080/health
-
-    hooks:
-      afterUp:
-        - exec: "migrate up"
-          service: api
-        - run: "./scripts/seed.sh"
-      beforeDown:
-        - exec: "migrate down"
-          service: api
-
-    deps:
-      db:
-        kind: postgres
-        version: "16"
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-        volume: "db-data:/var/lib/postgresql/data"
-      cache:
-        kind: redis
-        version: "7"
-        ports:
-          - "6379:6379"
-
-  ci:
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:latest
-        env:
-          APP_ENV: test
-          DB_HOST: db
-          DB_PORT: "5432"
-          DB_NAME: appdb
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-        dependsOn:
-          - db
-    deps:
-      db:
-        kind: postgres
-        version: "16"
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-
-  k8s:
-    runtime: k8s
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:latest
-        ports:
-          - "80:8080"
-        env:
-          APP_ENV: production
-          DB_HOST: db
-          DB_PORT: "5432"
-    deps:
-      db:
-        kind: postgres
-        version: "16"
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-```
+See [`examples/basic/devx.yaml`](../examples/basic/devx.yaml) for a complete project with a
+database, cache, a one-shot migration, a built-from-source API with an HTTP readiness
+check, and a background worker.
