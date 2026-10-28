@@ -3,6 +3,15 @@
 Status: proposal — not yet implemented. Written to align on direction before
 any code changes.
 
+> **Revision 2** — v1 of this doc (below, mostly unchanged) proposed a
+> `Task{ExecSpec}` model with a closed `ContainerExec | ProcessExec |
+> CommandExec` union and an `Executor` interface. On review that still has
+> real coupling left in it. See "Revision 2: what's still coupled, and the
+> open-driver-registry alternative" at the end — it supersedes the exec-kind
+> union and the handling of providers/hooks described below. Sections before
+> it are kept for the problem statement and migration-plan framing, which
+> still hold.
+
 ## Problem
 
 devx currently has **three parallel orchestration models** that each
@@ -192,3 +201,236 @@ shippable/reviewable — no big-bang rewrite.
    opt-in `parallel: true` per task until it's proven stable?
 3. Keep `internal/graph` as the shared topo-sort, or fold it into
    `internal/task` since nothing else will use it standalone afterward?
+
+---
+
+## Revision 2: what's still coupled, and the open-driver-registry alternative
+
+### Self-critique of v1
+
+Re-reading v1 against the actual code, four coupling points survive it:
+
+1. **`ExecSpec` is still a closed sum type.** `Container | Process | Command`
+   is smaller than today's situation but has the identical shape as the
+   problem: adding Kubernetes as a fourth case means touching the `ExecSpec`
+   struct, the scheduler's dispatch, and every exhaustive switch over it —
+   the same "new technology = edit N files" pattern, just with N reduced
+   from ~6 to ~3. It doesn't fix the *pattern*, only its current severity.
+
+2. **Providers still leak one backend's schema into "data".** v1 said
+   providers become "defaults, not control flow" but didn't look closely
+   enough: `internal/providers.ComposeFragment.Healthcheck` (`providers.go:66-73`)
+   *is* `internal/compose.Healthcheck` by another name — a provider's output
+   is already compose-shaped. A `K8sExecutor` can't consume it; it would need
+   its own provider protocol, or providers need to return something
+   backend-neutral. v1 didn't actually resolve this, it deferred it.
+
+3. **"Where does this run: host or container?" is encoded three
+   different, incompatible ways today, and v1 only touches one of them:**
+   - `Service.Kind` (`"container"` | `"process"`) — `manifest.go:113`
+   - `Hook.Exec`+`Hook.Service` (container) vs `Hook.Run` (host), with its
+     own mutual-exclusion validation (`validate.go:90-114`) — this is a
+     second, parallel implementation of the same container-vs-host
+     decision, with its own rules (`background` only valid for `Run`, `name`
+     only valid for `Run`, etc.)
+   - `Script.Container` (`"auto"` | `"true"` | `"false"`) — a *third*
+     mechanism, using `docker ps` label-matching and the external
+     `devcontainer` CLI (`cmd_run.go:189-217`), unrelated to compose `exec`
+     or to `Hook.Exec`.
+
+   v1's `CommandExec` would become a *fourth* place this gets decided if we
+   don't also fold `Hook` into the same model. Hooks were not mentioned in
+   v1's migration plan at all — that's a gap, not a deferred nice-to-have:
+   `Hook` is structurally just "a `Task` that runs once and blocks a phase",
+   and shipping `Task` without absorbing `Hook` leaves a fourth orchestration
+   model standing, not three.
+
+4. **Readiness is closed, too.** `ready.Probe` only knows `HTTP`/`TCP`
+   (`ready/ready.go`). Any new readiness signal (a shell command exit code,
+   a log line pattern, a Kubernetes `readinessProbe`, a Docker `HEALTHCHECK`)
+   needs a new field on `Probe` and a new branch in `ready.Wait`'s poll loop
+   — same closed-union problem at a different layer.
+
+The common root cause: **every layer models "the N ways to do X" as a closed
+Go struct/union with one field per technology**, instead of as an open,
+string-keyed registry of small, swappable implementations behind one
+interface. Closed unions are why "add a technology" always touches multiple
+files — there is always a `switch`/`if` somewhere that enumerates every kind
+by name.
+
+### The fix: one `Task`, an open driver registry, backend-neutral readiness
+
+```go
+// internal/task/task.go
+type Task struct {
+    Name      string
+    DependsOn []string
+    Env       map[string]string
+    Ports     []string          // host-reachable ports, for status/links — backend-agnostic
+    Ready     ReadyCheck         // see below — one shape for every backend
+    Driver    string             // e.g. "container", "process", "command", "k8s" — NOT a Go type switch
+    With      map[string]any     // driver-specific config, validated by the driver itself
+    Transient bool               // true for one-shot tasks (today's Hooks): run to completion, don't stay "up"
+}
+```
+
+- `Task` is the **only** node type. `Service`, `Dep`, `Script`, and `Hook`
+  all become `Task` values at manifest-load time — four YAML shapes mapping
+  onto one internal struct, not four runtime concepts. `Transient` is what
+  replaces `Hook` entirely: an `afterUp` hook is just a `Task{Transient:
+  true, DependsOn: [all long-running tasks]}`; `beforeDown` is a transient
+  task the scheduler runs during `Stop`. One validation path
+  (container-vs-host is resolved once, by the driver, not three times).
+
+- **Drivers are a compile-time registry, not runtime plugins:**
+
+  ```go
+  // internal/task/driver.go
+  type Driver interface {
+      Validate(with map[string]any) error
+      Start(ctx context.Context, t Task) (Handle, error)
+  }
+
+  type Handle interface {
+      Status(ctx context.Context) (Status, error)
+      Stop(ctx context.Context) error
+      Logs(ctx context.Context, opts LogOptions) (io.ReadCloser, error)
+      Exec(ctx context.Context, argv []string) (int, error)
+  }
+
+  var drivers = map[string]Driver{
+      "container": containerdriver.New(), // wraps internal/runtime + internal/compose
+      "process":   processdriver.New(),   // wraps internal/process (near-zero change)
+      "command":   commanddriver.New(),   // today's scripts:, now graph-aware
+      "k8s":       k8sdriver.New(),
+  }
+  ```
+
+  This is the crucial difference from v1 and from today's provider plugins:
+  registering a new driver is **one `map` entry and one small file**, with
+  no change to `Task`, the scheduler, or any CLI command — the thing v1
+  still got wrong for `ExecSpec`. It's also explicitly *not* the external,
+  versioned-binary plugin model (`internal/providers`) — drivers ship in the
+  devx binary, so there's no network fetch, no version-pinning between a
+  provider release and devx's expectations, and no 404s. External,
+  dynamically-loaded drivers remain a possible *future* extension (e.g. via
+  Go plugins or a subprocess protocol) but are not required for the common
+  case, unlike today.
+
+- **Readiness becomes backend-neutral and driver-agnostic:**
+
+  ```go
+  type ReadyCheck struct {
+      HTTP    string   // unchanged
+      TCP     string   // unchanged
+      Command []string // NEW — exit-code-based; works for process, container (via driver's Exec), k8s, anything
+  }
+  ```
+
+  A `Command` check expressed as `["pg_isready", "-U", "postgres"]` is run
+  through whatever the driver's `Exec` means for that backend (a host
+  process call, a `docker compose exec`, a `kubectl exec`) — one readiness
+  model, one poll loop in `internal/ready`, no backend-specific healthcheck
+  type. This also directly replaces `providers.ComposeFragment.Healthcheck`:
+  a provider contributes a `ReadyCheck{Command: [...]}` default, which every
+  driver can execute, not just the container one.
+
+- **Providers, revised:** a provider is reduced to a small, static,
+  **in-binary** table for the common dep kinds (`postgres`, `redis`,
+  `mysql`, `mongo`, …) — default image + `ReadyCheck.Command` + output var
+  names. This covers the 80% case with *zero* network dependency and zero
+  version coupling (it ships and versions with devx itself). The external,
+  fetched-binary provider mechanism (`internal/providers/fetch.go`) is kept
+  **only** as an escape hatch for long-tail/private dep kinds, clearly
+  documented as the exception, not the default path every `kind:` goes
+  through today.
+
+- **Mixed backends stop being a scheduler concern.** Because batching is a
+  driver-internal optimization (the `container` driver may still coalesce
+  all its tasks into one `docker compose up -d`), nothing stops a profile
+  mixing `driver: container` (docker), a future `driver: podman`, and
+  `driver: k8s` tasks side by side — the scheduler only ever talks to the
+  per-task `Handle`, never to a backend directly.
+
+### Revised, smaller manifest surface
+
+```yaml
+# deps/services/scripts collapse onto one shape at parse time; YAML stays close to today:
+services:
+  api:
+    driver: container        # replaces kind: container (default if omitted + image/build set)
+    image: ...
+services:
+  web:
+    driver: process           # replaces kind: process
+    run: yarn dev
+scripts:
+  migrate:
+    driver: command           # today's scripts:, now dependsOn-able
+    run: ./scripts/migrate.sh
+    dependsOn: [db]
+hooks: # REMOVED — express as a transient command task instead:
+  # afterUp: [{run: "./seed.sh"}]  →
+scripts:
+  seed:
+    driver: command
+    run: ./seed.sh
+    dependsOn: [api, db]
+    transient: true            # run once, don't block `down`/`status` as "running"
+```
+
+Net schema change is still small, but it **removes** a whole top-level
+concept (`hooks:`) instead of only adding one (`dependsOn` on scripts) — a
+real reduction in surface area, which is the thing the "keeps expanding"
+concern is actually about.
+
+### How this answers the original concern, point by point
+
+- *"Strong coupling to a specific version"* → common dep kinds become
+  in-binary drivers with no version-pinned network fetch; the versioned
+  external-plugin path becomes optional, not default.
+- *"Expanding becomes a new feature all the time"* → a new technology is one
+  `Driver` implementation registered in a map; no change to `Task`, the
+  scheduler, validation, or any `cmd/devx/*.go` file. Compare to today,
+  where a new `kind` or runtime touches `compose.go`, `k8s/render.go`,
+  `cmd_up.go`, `cmd_status.go`, and `validate.go`.
+- *"Make gives structure for your own commands/flow but is too vague"* →
+  `scripts:` tasks get `dependsOn`, readiness gating, and participate in
+  `status`/`logs`/`down` for free (one scheduler), while still being "just a
+  shell command" to author — Make's authoring simplicity, devx's execution
+  structure.
+
+### Updated migration plan
+
+1. `internal/task`: `Task`, `Driver`/`Handle` interfaces, scheduler,
+   backend-neutral `ReadyCheck` (additive — `HTTP`/`TCP` unchanged, `Command`
+   new).
+2. `processdriver` wrapping `internal/process.Supervisor` (near-zero
+   behavior change) + `commanddriver` for `scripts:` with `dependsOn`. Ship
+   as one PR — delivers the Make-parity ask standalone.
+3. Fold `Hook` into `Task{Transient: true}` via `commanddriver`; delete
+   `config.Hook`/`Hooks` and their bespoke validation once callers migrate.
+4. `containerdriver` wrapping `internal/runtime` + `internal/compose`;
+   migrate `cmd_up.go`/`cmd_status.go`/`cmd_logs.go`/`cmd_exec.go`/
+   `cmd_down.go` onto the scheduler.
+5. `k8sdriver` wrapping `internal/k8s`; retire `runUpK8s`'s separate path.
+6. Collapse common dep kinds into in-binary driver defaults; keep
+   `internal/providers` only for externally-sourced kinds, clearly labeled
+   as the non-default path.
+
+Each step keeps `go build ./... && go test ./...` green and ships
+independently.
+
+### Open questions (updated)
+
+1. Where should `With map[string]any` validation live — per-driver
+   (duck-typed, decentralized) or a light JSON-schema-per-driver registered
+   alongside each `Driver`? The latter keeps `devx validate`/editor
+   `$schema` support working without a central switch statement.
+2. `Transient` tasks replacing `Hook.Background` — should a transient task
+   streaming output (today's background run hooks) be a first-class driver
+   behavior, or a `With` option on `commanddriver` specifically?
+3. Is a compile-time driver registry sufficient long-term, or do we want to
+   reserve the `Driver` interface's shape now so an *optional* out-of-process
+   driver protocol (for private/long-tail tech) can be added later without
+   another interface break?
