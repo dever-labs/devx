@@ -564,7 +564,10 @@ surfaced:
 | `devx workspace list` / `devx workspace rm <id>` | **New.** `list` shows every active workspace id and its tasks (grouped, mirrors `devx ps --all-workspaces` below). `rm <id>` tears down that workspace's containers/volumes and frees its ports; `scope: shared` tasks are only stopped if no other workspace still references them. |
 | `devx ps --all-workspaces` | **New.** Same as `devx status`'s running-task view, but across every active workspace at once instead of just the current one — for checking what's running across issues without switching windows. |
 | `devx workspace new <id> [--agent <name>]` | **New.** Create a `git worktree` for `<id>`, run `devx up --workspace <id>` in it, then attach interactively to the named `agents:` entry (or the sole one) — one command to start working on an issue. |
+| `devx workspace` (bare) | **New.** Shorthand for `devx workspace new` that fills in gaps interactively: prompts for `<id>` (used as both workspace id and new branch name) if omitted, and prompts to pick an `agents:` entry if more than one is configured and `--agent` wasn't given. TTY-only — in a non-interactive context (script, or an agent driving devx itself) it errors asking for `devx workspace new <id> --agent <name>` explicitly instead of hanging on a prompt. With exactly one `agents:` entry, no prompt either way. |
 | `devx workspace agent <id> [<name>]` | **New.** Attach interactively to an `agents:` entry, cwd'd into workspace `<id>`'s worktree with that workspace's env resolution — for re-attaching in a new terminal/window without recreating the stack. |
+| `devx workspace clean` | **New.** Bulk-removes stale workspaces: worktree directory no longer exists (removed outside devx) → reclaims its orphaned containers/volumes/ports; worktree's branch merged/deleted upstream → candidate for removal. Skips (warns, doesn't delete) any workspace with uncommitted/unpushed changes unless `--force`. On-demand only — no background/automatic cleanup, consistent with devx having no daemon. |
+| `devx workspace list --stale` | **New.** Dry-run preview of exactly what `devx workspace clean` would remove, without removing anything. |
 | `devx up --watch` | **New.** After the stack is up, watches every task in the resolved closure that has `sources:` set and restarts it (stop, re-run recipe, wait for ready again for `detached:` tasks; just re-run for one-shot `deps:` of a detached task, e.g. `migrate`) on change — the whole-stack version of `devx run <name> --watch` below, applied automatically across the graph instead of needing one `--watch` per service in separate terminals. Mirrors `docker compose up --watch`/`docker compose watch`. A rebuild failure on one task is reported inline and leaves the rest of the stack running (per-task isolation) rather than stopping the whole `--watch` session. |
 | `devx run <name...>` | Run one-shot task(s) to completion, in the order given, respecting `deps:`. Multi-target, like `devx up <name...>`. |
 | `devx run <name> --dry-run` | Same dry-run semantics as `up`. |
@@ -977,12 +980,68 @@ shell command for every other task.
   --workspace <id>`, then drops straight into the named agent. Chains
   the two steps above so starting work on a new issue (worktree + stack
   + agent) is one command instead of three.
+- `devx workspace` (bare, no subcommand) — the "I'm already in the
+  devcontainer, open a new terminal, go" entrypoint: shorthand for
+  `devx workspace new` that fills in gaps interactively instead of
+  requiring every argument up front. Prompts for `<id>` if omitted (used
+  as both the workspace id and the new branch name); prompts to pick an
+  `agents:` entry only if more than one is configured and `--agent`
+  wasn't given — with exactly one entry it's used automatically, no
+  prompt, matching the doc's existing "zero config for the common case"
+  philosophy. Prompting is TTY-only: in a non-interactive context
+  (scripted, or an agent driving devx itself) it errors asking for the
+  explicit `devx workspace new <id> --agent <name>` form instead of
+  hanging on a prompt that can never be answered.
 - Credentials/auth (API keys, OAuth tokens an agent CLI stores under
   `$HOME`) are fine to share across workspaces in Tier 1 — same
   container, same account, no isolation needed there. Per-workspace
   conversation/session state (whatever an agent persists under its own
   cwd, e.g. a `.copilot/`/`.claude/` directory) is already isolated for
   free, since cwd is the worktree and worktrees don't share files.
+
+#### Cleaning up workspaces
+
+Workspaces accumulate — issues get closed, PRs merge, worktrees get
+deleted by hand outside devx. Two commands, both on-demand only (no
+background/automatic cleanup — devx has no daemon, consistent with the
+rest of this design):
+
+- `devx workspace clean` — bulk-removes *stale* workspaces: a worktree
+  directory that no longer exists (deleted outside devx, e.g. a plain
+  `git worktree remove`) has its orphaned containers/volumes/ports
+  reclaimed; a worktree whose branch has been merged or deleted upstream
+  is a removal candidate. Any workspace with uncommitted or unpushed
+  changes is skipped (warned, not deleted) unless `--force`.
+- `devx workspace list --stale` — dry-run preview of exactly what
+  `clean` would remove, without removing anything, so it's never a
+  surprise.
+
+#### Removing your own current workspace
+
+A child process can't change its parent shell's working directory —
+that's a Unix constraint, not a devx choice — so `devx workspace rm <id>`
+or `devx workspace clean` targeting the workspace you're currently `cd`'d
+into needs explicit handling instead of silently leaving the shell
+sitting in a now-deleted directory:
+
+- Detected by comparing `$PWD` against the resolved worktree path of the
+  workspace(s) being removed. The actual teardown (`git worktree
+  remove`, container/volume cleanup) is run from a safe cwd internally
+  (the main repo root) so git itself doesn't error on "working tree in
+  use."
+- Always prints a plain warning regardless of shell integration:
+  `Removed workspace <id> (you were inside it) — your shell is now in a
+  deleted directory; run: cd <path>` — so nothing is silently confusing
+  even with zero setup.
+- **Optional shell integration** (documented, opt-in, never auto-
+  installed): a small `devx()` shell function wrapping the real binary,
+  which — after it exits — checks whether devx left a cd-target sentinel
+  and, if so, `cd`s there automatically. Same trick tools like `z`/
+  `direnv`/`rbenv` use to work around the same constraint. Without
+  sourcing it, you get the explicit warning + a path to copy-paste;
+  with it, you're dropped straight into the fallback location (the main
+  repo root, unless another active workspace is designated to land in
+  instead) with no extra step.
 
 ### Tier 2 (already possible today, no devx change): per-worktree devcontainer
 
@@ -1194,7 +1253,21 @@ shape as part of landing this.
     passed straight through (reusing the `interactive: true` code path,
     not a new one); `devx workspace new <id> [--agent <name>]` chains
     `git worktree add` + `devx up --workspace <id>` + the above into one
-    command.
+    command; bare `devx workspace` wraps `new` with TTY-only interactive
+    prompts for `<id>`/agent selection when omitted, erroring instead of
+    blocking when stdin isn't a TTY.
+18. **`devx workspace clean`/`list --stale`** (see "Cleaning up
+    workspaces"): staleness check (worktree directory missing, or
+    branch merged/deleted via `git branch --merged`/checking the remote)
+    plus a dirty-worktree guard (`git status --porcelain`) gating
+    deletion behind `--force`.
+19. **Current-workspace-safe `rm`/`clean`** (see "Removing your own
+    current workspace"): compares `$PWD` against the workspace(s) being
+    torn down, runs the actual `git worktree remove`/container cleanup
+    from the main repo root instead of the (about to be deleted) cwd,
+    always prints the explicit `cd <path>` fallback warning, and writes
+    an optional cd-target sentinel for the documented (opt-in, not
+    auto-installed) shell wrapper function to pick up.
 
 Each step keeps `go build ./... && go test ./...` green; the full
 rewrite lands once all steps are done rather than being individually
