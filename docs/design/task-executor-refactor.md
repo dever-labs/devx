@@ -100,7 +100,14 @@ shaped at all.
 Full task shape: `deps: [name, ...]`, `run: <shell command>`, `ready:
 {http|tcp|cmd}` (override only), `detached: true|false` (override only),
 `desc: <string>` (optional, drives `devx --help`), `group: <string>`
-(optional, drives section headers in `devx --help` — see below). No
+(optional, drives section headers in `devx --help` and `--group`
+selection — see below), `env: {KEY: value}` (optional, raw pass-through to
+the subprocess — distinct from `vars:`, see below), `os: [linux, darwin,
+windows]` (optional, skip this task entirely on other platforms),
+`interactive: true|false` (optional, attach stdin/stdout/stderr directly
+instead of capturing for `logs`), `sources: [glob, ...]` / `generates:
+[glob, ...]` (optional, skip re-running if `generates:` is newer than
+every matched `sources:` file — see "Incremental skip" below). No
 `driver:`/`with:` field — `run:` is plain shell, technology-neutral by
 construction. No before/after hooks — `deps:` is the only ordering
 primitive; there is no separate "runs after, without being a declared
@@ -130,6 +137,68 @@ prerequisite" concept (see "Alternatives considered").
   tasks into **one** graph with namespaced task names (`infra:db`), not a
   recursive sub-process per file — see "Alternatives considered" for why
   recursive sub-invocation is the wrong model to copy from Make.
+
+### Additional optional fields (from Make / modern task runners)
+
+Reviewed against Make and modern runners (Taskfile, Just) for what else
+genuinely earns its keep in a dev-environment context — see "Explicitly
+not adopted" in "Alternatives considered" for what was reviewed and left
+out:
+
+- **`env: {KEY: value}`** — raw environment variables passed to the
+  task's subprocess only. Deliberately separate from `vars:`: `vars:` are
+  resolved by devx itself via `${VAR}` substitution into manifest string
+  fields (so they can appear in `ready.http`, not just `run:`); `env:` is
+  passed straight through to the OS process environment, untouched by
+  substitution, which is where host-provided secrets belong (consistent
+  with the repo's existing convention that secrets are never written into
+  `devx.yaml` — `env:` values are typically `${HOST_ENV_VAR}` references
+  resolved from the *inherited* shell environment, not literals).
+- **`os: [linux, darwin, windows]`** — skip this task entirely (not an
+  error) when the host OS isn't in the list. Relevant because devx already
+  does cross-platform tool detection/`doctor`; some recipes (Homebrew
+  installs, WSL-specific steps) are legitimately OS-specific.
+- **`interactive: true`** — attach the task's stdin/stdout/stderr directly
+  to the terminal instead of capturing output for `devx logs`, for tasks
+  that need a live TTY (a `psql` shell, an interactive debugger). Mirrors
+  the gap already implied by today's `Service.Debug` field.
+- **`sources: [glob, ...]` / `generates: [glob, ...]`** — Make's actual
+  core feature (skip a recipe if the target is already up to date versus
+  its prerequisites), applied to one-shot tasks instead of files-as-targets
+  generically. If every `generates:` glob match has a newer mtime than
+  every `sources:` glob match, `devx run`/`up` skips the recipe (reports
+  "up to date", same spirit as Make's own skip message). Opt-in — a task
+  with neither field always runs. High value for expensive one-shot steps
+  (codegen, compiling a tool, migrations keyed off a migrations
+  directory) that are wasteful to always re-run.
+
+```yaml
+# --- env: vs vars: ---
+db:
+  run: docker run --rm -d --name db -p ${PORT}:5432 -e POSTGRES_PASSWORD=${DB_PASSWORD} ${IMAGE}
+  env:
+    DB_PASSWORD: ${HOST_DB_PASSWORD}   # pulled from the inherited shell env, never written literally
+
+# --- os: ---
+install-tools:
+  desc: Install macOS-only dev dependencies via Homebrew
+  os: [darwin]
+  run: brew bundle --file=./Brewfile
+
+# --- interactive: ---
+psql:
+  desc: Open a psql shell against the dev db
+  deps: [db]
+  interactive: true
+  run: docker exec -it db psql -U postgres
+
+# --- sources:/generates: ---
+build:
+  desc: Compile the CLI binary
+  sources: ["cmd/**/*.go", "internal/**/*.go", "go.sum"]
+  generates: ["./bin/devx"]
+  run: go build -o ./bin/devx ./cmd/devx
+```
 
 ### `devx --help` reflects the manifest, not a hardcoded list
 
@@ -170,6 +239,28 @@ migrate
   (`cmd_status.go`/`cmd_doctor.go` pattern) — `devx tasks --json` dumps the
   same structured list for tools/agents instead of scraping `--help` text.
 
+## CLI surface
+
+Commands and flags this adds/changes, reviewed against Make's own CLI
+(`make target1 target2`, `-n`, `-k`, `-j`) and the gaps that review
+surfaced:
+
+| Command | Behavior |
+|---|---|
+| `devx up` | Transitive closure of every `detached: true` task's `deps:` (see worked example below for the exact rule). Independent one-shot branches run in parallel, not strictly sequential — mirrors Make's `-j` by default, not an opt-in flag. |
+| `devx up <name...>` | **New.** Partial up — only the named tasks + their transitive deps, not the whole closure. Mirrors `make a b c`. |
+| `devx up --dry-run` | **New.** Print the resolved graph and every substituted `run:`/`ready:` command, execute nothing. Mirrors `make -n`. |
+| `devx up --keep-going` | **New.** Default is fail-fast (stop everything on first error, closest to least-surprising for a dev-env bootstrap). `--keep-going` continues unrelated branches of the graph on failure — mirrors `make -k`. |
+| `devx up --group <name>` | **New.** Only tasks whose `group:` matches (+ their deps) — reuses the `group:` field already defined for `--help`, instead of inventing a second selection mechanism (e.g. tags). |
+| `devx run <name...>` | Run one-shot task(s) to completion, in the order given, respecting `deps:`. Multi-target, like `devx up <name...>`. |
+| `devx run <name> --dry-run` | Same dry-run semantics as `up`. |
+| `devx status` | Unchanged in spirit — detached tasks: running/ready/crashed; one-shot tasks with `sources:`/`generates:`: up to date / stale, last run time, exit code. |
+| `devx logs <name>` | Unchanged — tails captured output. For `interactive: true` tasks, `logs` has nothing captured (documented, not an error) since output went straight to the terminal when it ran. |
+| `devx down` | Unchanged — stops every running detached task in reverse dependency order. |
+| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `os`, `interactive`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. |
+| `devx --help` / `devx run <name> --help` | Generated from the manifest — see above. |
+| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness) surface here as warnings, not errors. |
+
 ## Example: a realistic multi-service project
 
 A fuller project, showing every field and override in context — not just
@@ -201,8 +292,29 @@ smoke:
   deps: [web:app]              # still ad hoc: nothing depends ON smoke
   run: ./scripts/smoke-test.sh
 
+build:
+  desc: Compile the CLI binary
+  sources: ["cmd/**/*.go", "internal/**/*.go", "go.sum"]
+  generates: ["./bin/devx"]
+  run: go build -o ./bin/devx ./cmd/devx
+
+install-tools:
+  desc: Install macOS-only dev dependencies via Homebrew
+  os: [darwin]
+  run: brew bundle --file=./Brewfile
+
+psql:
+  desc: Open a psql shell against the dev db
+  deps: [db]
+  interactive: true
+  run: docker exec -it db psql -U postgres
+
 # ---- services: part of `devx up`, fully inferred (bare string, zero config) ----
-db: docker run --rm -d --name db -p ${PORT}:5432 -e POSTGRES_PASSWORD=secret ${IMAGE}
+db:
+  desc: Postgres for local dev
+  run: docker run --rm -d --name db -p ${PORT}:5432 -e POSTGRES_PASSWORD=${DB_PASSWORD} ${IMAGE}
+  env:
+    DB_PASSWORD: ${HOST_DB_PASSWORD}   # from the inherited shell env, never a literal in devx.yaml
 
 # ---- service needing a readiness override: TCP-open isn't "ready" here ----
 redis:
@@ -275,10 +387,27 @@ transitive closure of every `detached: true` task's `deps:`. Walking it:
 their full dependency chains — `db`, `migrate` (dep of `api`), `seed` (dep
 of `web:app`, which deps on `migrate`), and `infra:minio` (dep of both) —
 plus `redis` and `queue`, detached but standalone. **Not** run by `up`:
-`lint`, `fmt`, `test`, `smoke`, and `infra:create-bucket` — one-shot tasks
-with no detached task depending on them, invoked explicitly with
-`devx run <name>` instead. This is the one rule governing `up`'s scope —
-no separate "include in up" flag needed.
+`lint`, `fmt`, `test`, `smoke`, `build`, `install-tools`, `psql`, and
+`infra:create-bucket` — one-shot tasks with no detached task depending on
+them, invoked explicitly with `devx run <name>` instead. This is the one
+rule governing `up`'s scope — no separate "include in up" flag needed.
+
+A few CLI invocations against this same manifest:
+
+```sh
+devx up                        # everything above
+devx up db redis               # just those two + nothing else (no deps)
+devx up --group Services       # db, redis, queue, api, web:app + their deps
+devx up --dry-run              # print the resolved graph + substituted
+                                # commands, run nothing
+devx up --keep-going           # if `redis` fails to start, `db`/`queue`/
+                                # `api` still proceed; only redis's branch stops
+devx run build                 # skip, printing "up to date", if ./bin/devx
+                                # is newer than every cmd/**/*.go + go.sum
+devx run psql                  # attaches the terminal directly (interactive: true)
+devx run install-tools         # no-op on Linux/CI (os: [darwin]), runs on macOS
+devx tasks --json               # structured list for tools/agents
+```
 
 ## Internal architecture
 
@@ -287,11 +416,16 @@ The manifest redesign is paired with an execution-model redesign so
 
 ```go
 type Task struct {
-    Name     string
-    Deps     []string
-    Run      string
-    Ready    ReadyCheck
-    Detached bool
+    Name        string
+    Deps        []string
+    Run         string
+    Ready       ReadyCheck
+    Detached    bool
+    Env         map[string]string
+    OS          []string // empty = all platforms
+    Interactive bool
+    Sources     []string // glob patterns
+    Generates   []string // glob patterns
 }
 
 type ReadyCheck struct {
@@ -374,6 +508,24 @@ one.
   leanness — every top-level key already unambiguously being a task
   (barring `vars:`/`includes:`) removes a level of nesting for no loss of
   clarity.
+- **Make's pattern rules / wildcard targets** (`%.o: %.c`). Reviewed and
+  rejected: would let one YAML entry generate many tasks by filename
+  pattern, but pushes `devx.yaml` toward "a tiny programming language,"
+  directly against the minimize-manifest-surface goal. A hand-written
+  `includes:` file (or a small code-generation step outside devx) covers
+  the rare case of truly repetitive tasks.
+- **Make functions/conditionals** (`$(shell ...)`, `$(wildcard ...)`,
+  `ifeq`). Reviewed and rejected for the same reason — `run:` is already
+  a full shell command; anything conditional belongs inside the recipe
+  script, not the manifest.
+- **Order-only prerequisites** (Make's `|`, a dependency that must exist
+  but doesn't force a re-run if it changes). Reviewed and rejected: only
+  meaningful alongside an incremental-rebuild model for *every* task;
+  devx's `sources:`/`generates:` skip is opt-in per task, so there's no
+  general "did any prerequisite change" question this would answer.
+- **Double-colon rules** (multiple independent recipes for the same
+  target). Reviewed and rejected: no identified use case in a dev-env
+  manifest; one task name should mean one recipe.
 
 ## Migration plan
 
@@ -406,6 +558,19 @@ one.
    (name, `desc:` or truncated `run:`, `group:` section headers, `deps:`/
    `ready:` annotations) directly from the parsed `Manifest`, replacing the
    static subcommand-only help text for the task-listing portion.
+8. Scheduler: parallel execution of independent graph branches by default
+   (Make's `-j` behavior, not opt-in); `--dry-run` (print resolved graph +
+   substituted commands) and `--keep-going` flags on `up`/`run`; multi-
+   target args (`devx up <name...>`, `devx run <name...>`) and `--group`
+   selection reusing the `group:` field.
+9. `env:` (raw pass-through, resolved from inherited process environment
+   only — never literals) and `os:` (skip on non-matching platforms) as
+   task fields, enforced before dispatching to a `Driver`.
+10. `interactive: true` support in `processDriver`/`commandDriver`:
+    attach stdin/stdout/stderr directly instead of capturing for `logs`.
+11. `sources:`/`generates:` glob matching + mtime comparison, gating
+    whether `commandDriver`/`processDriver` actually runs a task's recipe
+    or reports "up to date."
 
 Each step keeps `go build ./... && go test ./...` green and ships
 independently.
@@ -430,3 +595,13 @@ independently.
    is that surprising enough to warrant `devx validate` flagging one-shot
    tasks that are unreachable from any detached task, in case it's a
    forgotten `deps:` edge rather than an intentionally ad hoc command?
+5. `sources:`/`generates:` freshness is mtime-based like Make, which is
+   simple but has Make's own known gotchas (clock skew, `git checkout`
+   resetting mtimes to checkout time rather than content-change time) — is
+   mtime comparison good enough for a dev-env tool, or is a content hash
+   (slower, but immune to those gotchas) worth the extra implementation
+   cost given these are typically small, local dev-loop tasks?
+6. `--keep-going`'s default being off (fail-fast) is a judgment call for
+   "what's least surprising when bootstrapping a dev environment" — should
+   it default on instead, so e.g. a flaky `redis` doesn't block an
+   unrelated `db`/`api` from coming up during `devx up`?
