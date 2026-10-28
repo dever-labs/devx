@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"os/exec"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/dever-labs/devx/internal/config"
+	"github.com/dever-labs/devx/internal/task"
 )
 
 // startGroupedProcess starts a short-lived command in its own process
@@ -111,6 +113,37 @@ func TestReverseDependencyOrder_DependentsBeforeDependencies(t *testing.T) {
 	}
 	if pos["api"] > pos["db"] {
 		t.Errorf("expected api (dependent) to stop before db (dependency), got order %v", order)
+	}
+}
+
+func TestStopEntry_NoPIDAndNotContainerIsNoop(t *testing.T) {
+	entry := task.StateEntry{IsContainer: false, PID: 0}
+	if err := stopEntry(context.Background(), entry, time.Second); err != nil {
+		t.Errorf("expected nil error for an entry with no PID and not a container, got %v", err)
+	}
+}
+
+func TestStopEntry_ContainerWithoutNameErrors(t *testing.T) {
+	entry := task.StateEntry{IsContainer: true, ContainerName: ""}
+	if err := stopEntry(context.Background(), entry, time.Second); err == nil {
+		t.Error("expected an error when a container entry has no containerName")
+	}
+}
+
+func TestStopEntry_ProcessDispatchesToProcessGroup(t *testing.T) {
+	pid := startGroupedProcess(t, "sleep", "100")
+	entry := task.StateEntry{IsContainer: false, PID: pid}
+	if err := stopEntry(context.Background(), entry, 2*time.Second); err != nil {
+		t.Fatalf("stopEntry: %v", err)
+	}
+	if syscall.Kill(pid, 0) == nil {
+		t.Fatal("expected process to be gone after stopEntry")
+	}
+}
+
+func TestStopContainerByName_EmptyNameErrors(t *testing.T) {
+	if err := stopContainerByName(context.Background(), "", time.Second); err == nil {
+		t.Error("expected an error when containerName is empty")
 	}
 }
 
