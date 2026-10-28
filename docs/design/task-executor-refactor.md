@@ -64,8 +64,10 @@ directly, not an SDK.
 ## Manifest design
 
 A task is either a bare string (just the command — the common case, no
-config needed) or an object, needed **only** when a task has `deps:`, an
-explicit `ready:`/`detached:` override, or a `desc:`. Task names are
+config needed) or an object, needed whenever a task sets any field beyond
+a bare command — most commonly `deps:`, an explicit `ready:`/`detached:`
+override, or a `desc:`, but the same applies to every other optional
+field below (`env:`, `sources:`, `port:`, `scope:`, ...). Task names are
 **top-level keys
 directly** — no `tasks:`/`services:`/`profiles:` wrapper. `vars:`,
 `includes:`, and `agents:` are the only other reserved top-level keys.
@@ -126,7 +128,7 @@ below), `requires: [tool, ...]` (optional, external binaries this task's
 <string>` (optional, override when a container's name can't be parsed
 from `run:` for `docker stop` — see "Reliability" below), `scope: shared
 | workspace` (optional, default `workspace` — see "Parallel-issue
-workflows" above; `shared` tasks are deduplicated across concurrently
+workflows" below; `shared` tasks are deduplicated across concurrently
 running `devx up --workspace <id>` invocations instead of started once
 per workspace). No `driver:`/`with:` field — `run:` is plain shell, technology-neutral by
 construction. No before/after hooks —
@@ -295,7 +297,15 @@ new abstractions:
   through as `docker stop -t <seconds>` when set). `devx validate` warns
   when a container-shaped `run:` has no parseable/overridden name, since
   `Stop()` would otherwise have nothing to act on and `devx down` would
-  leave the container orphaned and running.
+  leave the container orphaned and running. The rest of a container
+  task's `Handle` follows the same "no held process, shell out to the
+  same `<name>` every time" principle as `Stop()`: `Status()` is a
+  `docker inspect --format '{{.State.Status}}' <name>`, `Logs()` is
+  `docker logs -f <name>` streamed back as the `io.ReadCloser`, and
+  `Exec()` is `docker exec <name> <args...>` — none of them need
+  devx to hold a live process reference, since the name alone is enough
+  to address the container through the Docker CLI at any point in its
+  lifecycle.
 - **Port-collision detection**: since ports are inferred silently from
   `run:` text (or `port:`), `devx validate` flags two tasks that resolve
   to the same port as a warning — otherwise the only symptom is one task
@@ -585,7 +595,7 @@ surfaced:
 | `devx up --dry-run` | **New.** Print the resolved graph and every substituted `run:`/`ready:` command, execute nothing. Mirrors `make -n`. Resolved `env:` values are shown redacted (`KEY=<redacted>`), never the real secret. |
 | `devx up --keep-going` | **New.** Default is fail-fast (stop everything on first error, closest to least-surprising for a dev-env bootstrap). `--keep-going` continues unrelated branches of the graph on failure — mirrors `make -k`. |
 | `devx up --group <name>` | **New.** Only tasks whose `group:` matches (+ their deps) — reuses the `group:` field already defined for `--help`, instead of inventing a second selection mechanism (e.g. tags). |
-| `devx up --workspace <id>` | **New.** See "Parallel-issue workflows" above. Namespaces container/network/volume names and non-pinned ports with `<id>`, so multiple `devx up` invocations against different `git worktree`s of the same manifest (e.g. one per issue, attached to the same shared devcontainer) can run concurrently without colliding. Defaults to a value derived from the current `git worktree` path when omitted; `scope: shared` tasks are deduplicated across workspaces rather than started once per workspace. |
+| `devx up --workspace <id>` | **New.** See "Parallel-issue workflows" below. Resolves `${workspace}`/`${port}` tokens with `<id>`/a per-workspace free port everywhere a manifest author explicitly references them (`containerName:`, `run:`, `ready:`, ...), so multiple `devx up` invocations against different `git worktree`s of the same manifest (e.g. one per issue, attached to the same shared devcontainer) can run side by side without colliding **on the fields that opt in**. It does not rewrite literal/hardcoded names or ports — those remain the manifest author's responsibility, same as without `--workspace`. Defaults to a value derived from the current `git worktree` path when omitted; `scope: shared` tasks are deduplicated across workspaces rather than started once per workspace. |
 | `devx workspace list` / `devx workspace rm <id>` | **New.** `list` shows every active workspace id and its tasks (grouped, mirrors `devx ps --all-workspaces` below). `rm <id>` tears down that workspace's containers/volumes and frees its ports; `scope: shared` tasks are only stopped if no other workspace still references them. |
 | `devx ps --all-workspaces` | **New.** Same as `devx status`'s running-task view, but across every active workspace at once instead of just the current one — for checking what's running across issues without switching windows. |
 | `devx workspace new <id> [--agent <name>]` | **New.** Create a `git worktree` for `<id>` (destination `../<repo-dir-name>-<id>`, new branch named `<id>` branched from the current `HEAD`; errors if the branch or worktree path already exists, suggesting `devx workspace agent <id>` instead of silently reusing/overwriting it), run `devx up --workspace <id>` in it, then attach interactively to the named `agents:` entry (or the sole one) — one command to start working on an issue. |
@@ -594,7 +604,7 @@ surfaced:
 | `devx workspace clean` | **New.** Bulk-removes stale workspaces: worktree directory no longer exists (removed outside devx) → reclaims its orphaned containers/volumes/ports; worktree's branch merged/deleted upstream → candidate for removal. Skips (warns, doesn't delete) any workspace with uncommitted/unpushed changes unless `--force`. On-demand only — no background/automatic cleanup, consistent with devx having no daemon. |
 | `devx workspace list --stale` | **New.** Dry-run preview of exactly what `devx workspace clean` would remove, without removing anything. |
 | `devx up --watch` | **New.** After the stack is up, watches every task in the resolved closure that has `sources:` set and restarts it (stop, re-run recipe, wait for ready again for `detached:` tasks; just re-run for one-shot `deps:` of a detached task, e.g. `migrate`) on change — the whole-stack version of `devx run <name> --watch` below, applied automatically across the graph instead of needing one `--watch` per service in separate terminals. Mirrors `docker compose up --watch`/`docker compose watch`. A rebuild failure on one task is reported inline and leaves the rest of the stack running (per-task isolation) rather than stopping the whole `--watch` session. |
-| `devx run <name...>` | Run one-shot task(s) to completion, in the order given, respecting `deps:`. Multi-target, like `devx up <name...>`. |
+| `devx run <name...>` | Run task(s) directly, in the order given, respecting `deps:`. For a one-shot task, blocks to completion (its normal behavior either way). For a `detached: true` task, runs it **in the foreground** instead of backgrounding + waiting on `ready:` the way `up` does — attaches directly to its logs/exit, Ctrl-C stops it — useful for iterating on one service without the rest of the stack. Multi-target, like `devx up <name...>`. |
 | `devx run <name> --dry-run` | Same dry-run semantics as `up`. |
 | `devx run <name> --watch` | **New.** Re-run the task whenever its `sources:` globs change (requires `sources:` to be set — error otherwise, nothing to watch). Same spirit as Docker Compose Watch, scoped to one task instead of a whole stack. |
 | `devx <name>` | **New.** Shorthand for `devx run <name>` (mirrors `make <target>`). Built-in command names always take precedence on collision — see "`devx --help`" below. |
@@ -953,7 +963,9 @@ overhead parallelism for issues that don't need hard isolation:
    volumes, or ports. This needs:
    - A **workspace id**, derived by default from the git worktree path
      (falls back to the current directory name when not inside a
-     worktree), overridable via `devx up --workspace <id>`.
+     worktree — see the **State** bullet below for what that fallback
+     means for cross-workspace features), overridable via `devx up
+     --workspace <id>`.
    - A `${workspace}` template token, usable in `containerName:` and
      anywhere `${VAR}` substitution already applies (see "Variables"
      above), so container/network/volume names get it folded in
@@ -968,15 +980,33 @@ overhead parallelism for issues that don't need hard isolation:
      explicitly — `run: ./bin/api --port ${port}` or `-p ${port}:5432`
      — to get a free ephemeral port allocated per workspace instead of a
      fixed one. A task that hardcodes a literal port with no `${port}`
-     reference is unaffected by workspaces at all; if two workspaces
-     both hit that same hardcoded port, `devx validate` warns on the
-     collision (as already described under "Inference") rather than
-     devx silently rewriting text it was never asked to control.
+     reference is unaffected by workspaces at all — including across
+     workspaces: two workspaces both hitting that same hardcoded port is
+     *not* caught by `devx validate`'s port-collision check, which is a
+     static, single-manifest-graph comparison (two tasks in one resolved
+     graph sharing a port) with no visibility into another already-
+     running workspace in a different process/terminal. That case
+     surfaces the same way it would without devx at all: a generic OS
+     "address already in use" error from the second `docker run`/process
+     at `up` time. Only `${port}`-using tasks get an actual collision-
+     free guarantee; devx silently rewriting text it was never asked to
+     control is explicitly out of scope.
      `${port}` is a separate, built-in token (same family as
      `${workspace}`, not a user-defined `vars:` entry) — unrelated to
      the existing `port:` field, since a task using `${port}` is
      self-describing to the same sniffer that reads a literal port out
      of `run:`, making an explicit `port:` override unnecessary for it.
+     It resolves once **per (workspace, task) pair**, not once per
+     workspace — a task using `${port}` twice in its own `run:`/`ready:`
+     (e.g. a service and its metrics port) gets two independent
+     allocations, not the same port repeated. Like any "ask the OS for a
+     free port, then launch a command that binds it later" scheme,
+     there's a small time-of-check/time-of-use race between allocation
+     and the task's own bind — devx accepts this same race any
+     port-finder script has rather than holding the socket open across
+     process boundaries; a bind failure in that narrow window is rare
+     enough to treat as an ordinary `up` failure, not something devx
+     retries around.
    - A new `scope: shared | workspace` task field (default `workspace`).
      `shared` tasks (e.g. one Postgres everyone's issue branches point
      at) run once regardless of how many workspaces are active; a
@@ -985,6 +1015,17 @@ overhead parallelism for issues that don't need hard isolation:
      copy. `${workspace}`/`${port}` on a `shared` task's fields is a
      validation error — a shared resource resolving to a different name
      or port per workspace would defeat the point of sharing it.
+     **Identity check**: before waiting on an existing `shared` task,
+     devx compares a hash of that task's resolved definition (`run:`,
+     `env:`, `ready:`, `dir:`, `containerName:`/inferred name — the same
+     fields the registry records when it first registers the task)
+     against what the current workspace's manifest resolves the
+     same-named `shared` task to. A mismatch is a hard error ("shared
+     task 'db' is already running from workspace `<other-id>` with a
+     different definition — this is almost certainly two branches
+     disagreeing on a shared dependency, not something devx should
+     paper over by picking one silently"), not a silent reuse of
+     whichever workspace happened to start it first.
    - A new `devx workspace` subcommand: `list` (what's running, grouped
      by workspace id), `rm <id>` (tear down that workspace's containers/
      volumes and free its ports — including `shared`-scope tasks only if
@@ -998,7 +1039,19 @@ overhead parallelism for issues that don't need hard isolation:
      has its own `.devx/` with no visibility into siblings. It instead
      lives at a path anchored to `git rev-parse --git-common-dir` — the
      one directory every worktree of the same repo already shares —
-     e.g. `<git-common-dir>/devx/workspaces.json`. Still fully local,
+     e.g. `<git-common-dir>/devx/workspaces.json`. **Outside a git
+     repository** (`git rev-parse --git-common-dir` fails), there are no
+     sibling worktrees to coordinate with in the first place — the
+     workspace-id "current directory name" fallback exists so `--workspace
+     <id>`/`${workspace}`/`${port}` still work standalone (namespacing one
+     manifest's own run against itself across separate invocations), but
+     `scope: shared` dedup and `devx workspace list`/`ps --all-workspaces`
+     (which need a *shared* registry to see across invocations) are
+     unavailable there: the registry falls back to a per-manifest local
+     file next to `.devx/` instead, visible only to that one checkout, not
+     coordinating anything cross-process. This is a deliberate scope cut,
+     not an oversight — the cross-workspace features this tier exists for
+     are inherently a git-worktree concept. Still fully local,
      file-based, no daemon/network service; just a shared location
      instead of a per-worktree one for the state that's inherently
      cross-worktree. **Concurrency**: every read-modify-write of
@@ -1093,6 +1146,16 @@ rest of this design):
   reclaimed; a worktree whose branch has been merged or deleted upstream
   is a removal candidate. Any workspace with uncommitted or unpushed
   changes is skipped (warned, not deleted) unless `--force`.
+  **Container tasks only**: reclaiming relies on the deterministic
+  `${workspace}`-templated container/volume name being reconstructable
+  from the workspace id and manifest alone (`docker stop`/`rm` by name),
+  independent of any local state. A plain `processDriver` detached task
+  (no container) has no such deterministic handle — its pid only ever
+  lived in that now-deleted worktree's `.devx/`, so `clean` cannot find
+  or signal it. Non-container detached tasks left running by a worktree
+  deleted outside devx are an acknowledged gap here, not a case `clean`
+  covers; `devx up`'s own stale-handle detection (see "Reliability")
+  only helps from inside the same worktree, before it's deleted.
 - `devx workspace list --stale` — dry-run preview of exactly what
   `clean` would remove, without removing anything, so it's never a
   surprise.
@@ -1268,9 +1331,10 @@ shape as part of landing this.
    written as literal secrets) and `os:` (skip on non-matching platforms,
    with dependents treated as satisfied) as task fields, enforced before
    dispatching to a `Driver`; validation rejects `interactive: true`
-   combined with `detached: true`, and `generates:` (without a paired
-   one-shot task) combined with `detached: true` — `sources:` alone is
-   valid on detached tasks (see point 12 below).
+   combined with `detached: true`, and `generates:` on a `detached:
+   true` task (mtime "already up to date" skip semantics only make
+   sense for a one-shot recipe) — `sources:` alone is valid on detached
+   tasks (see point 12 below).
 8. `interactive: true` support in `processDriver`/`commandDriver`:
    attach stdin/stdout/stderr directly instead of capturing for `logs`.
 9. `sources:`/`generates:` glob matching + mtime comparison on one-shot
