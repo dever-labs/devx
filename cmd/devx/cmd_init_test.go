@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -93,5 +94,94 @@ func TestWriteDevcontainer_DoesNotOverwriteExisting(t *testing.T) {
 	}
 	if string(got) != string(sentinel) {
 		t.Errorf("expected writeDevcontainer to leave an existing file untouched, got %s", got)
+	}
+}
+
+// withStdin temporarily replaces os.Stdin with a pipe fed by input, for
+// exercising interactive prompts (runInit) deterministically.
+func withStdin(t *testing.T, input string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	old := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = old })
+	go func() {
+		_, _ = w.WriteString(input)
+		w.Close()
+	}()
+}
+
+func TestRunInit_AlreadyExistsErrors(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.WriteFile(filepath.Join(dir, manifestFile), []byte("version: 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runInit(nil); err == nil {
+		t.Error("expected an error when devx.yaml already exists")
+	}
+}
+
+func TestRunInit_DefaultsWriteManifestAndDevcontainer(t *testing.T) {
+	dir := chdirTemp(t)
+	// Blank lines everywhere: accept every default (project name, stack
+	// dotnet, devcontainer yes, AI yes).
+	withStdin(t, "\n\n\n\n")
+
+	var initErr error
+	_ = captureStdout(t, func() {
+		initErr = runInit(nil)
+	})
+	if initErr != nil {
+		t.Fatalf("runInit failed: %v", initErr)
+	}
+
+	manifestPath := filepath.Join(dir, manifestFile)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("expected %s to be written: %v", manifestFile, err)
+	}
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("devx.yaml is not valid YAML: %v\n%s", err, data)
+	}
+	if _, ok := doc["ai"]; !ok {
+		t.Error("expected an ai: block since AI default is yes")
+	}
+
+	dcPath := filepath.Join(dir, ".devcontainer", "devcontainer.json")
+	if _, err := os.Stat(dcPath); err != nil {
+		t.Errorf("expected .devcontainer/devcontainer.json to be written: %v", err)
+	}
+}
+
+func TestRunInit_DeclineDevcontainerAndAI(t *testing.T) {
+	dir := chdirTemp(t)
+	withStdin(t, "myproj\ngo\nn\nn\n")
+
+	var initErr error
+	_ = captureStdout(t, func() {
+		initErr = runInit(nil)
+	})
+	if initErr != nil {
+		t.Fatalf("runInit failed: %v", initErr)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	if err != nil {
+		t.Fatalf("expected %s to be written: %v", manifestFile, err)
+	}
+	if strings.Contains(string(data), "ai:") {
+		t.Error("expected no ai: block when AI is declined")
+	}
+	if !strings.Contains(string(data), "name: myproj") {
+		t.Errorf("expected project name myproj, got:\n%s", data)
+	}
+
+	dcPath := filepath.Join(dir, ".devcontainer", "devcontainer.json")
+	if _, err := os.Stat(dcPath); err == nil {
+		t.Error("expected no devcontainer.json to be written when declined")
 	}
 }

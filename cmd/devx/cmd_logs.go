@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/dever-labs/devx/internal/task"
@@ -65,11 +66,19 @@ func tailAll(ctx context.Context, entries map[string]task.StateEntry, follow boo
 	}
 	sort.Strings(names)
 
+	// In non-follow mode we must wait for every goroutine to finish
+	// printing before returning — otherwise the process can exit (and
+	// main() can return) before any of the tailing goroutines get a
+	// chance to run, silently dropping output.
+	var wg sync.WaitGroup
+
 	// block forever on --follow; the process exits via Ctrl-C (SIGINT).
 	for _, n := range names {
 		n := n
 		e := entries[n]
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			f, err := os.Open(e.LogPath)
 			if err != nil {
 				return
@@ -81,6 +90,7 @@ func tailAll(ctx context.Context, entries map[string]task.StateEntry, follow boo
 	if follow {
 		select {}
 	}
+	wg.Wait()
 	return nil
 }
 

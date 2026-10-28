@@ -147,6 +147,13 @@ func TestStopContainerByName_EmptyNameErrors(t *testing.T) {
 	}
 }
 
+func TestRunDown_MissingManifestErrors(t *testing.T) {
+	chdirTemp(t)
+	if err := runDown(context.Background(), nil); err == nil {
+		t.Error("expected an error when devx.yaml doesn't exist")
+	}
+}
+
 func TestReverseDependencyOrder_CycleReturnsError(t *testing.T) {
 	m := &config.Manifest{Tasks: map[string]config.Task{
 		"a": {Name: "a", Run: "echo a", Deps: []string{"b"}},
