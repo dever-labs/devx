@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `devx version` command — prints the binary version set at build time
 - Multi-platform release workflow — GitHub Actions builds for Linux, macOS, Windows (amd64 + arm64) on `git tag v*`
 - Distribution packaging — Homebrew formula, npm package, WinGet manifests, Chocolatey package, install scripts
+- Dev Container Feature (`ghcr.io/dever-labs/devx/devx`) to install devx in any devcontainer without a custom install step; published via `.github/workflows/publish-features.yml`
 - `scripts/install.sh` and `scripts/install.ps1` — one-liner installers
 - Integration test scaffolding under `tests/integration/`
 - Comprehensive `examples/basic/` with all profile types and stub service source

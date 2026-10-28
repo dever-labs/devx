@@ -42,6 +42,13 @@ choco install devx
 winget install dever-labs.devx
 ```
 
+**Dev Containers**
+```json
+"features": {
+    "ghcr.io/dever-labs/devx/devx:1": {}
+}
+```
+
 Pre-built binaries for all platforms are also available on the [Releases](https://github.com/dever-labs/devx/releases) page — download, make executable, and place on your `PATH`.
 See [docs/install.md](docs/install.md) for all methods including step-by-step manual setup.
 

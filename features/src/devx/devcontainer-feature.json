@@ -1,0 +1,19 @@
+{
+  "id": "devx",
+  "version": "1.0.0",
+  "name": "devx",
+  "description": "Installs devx, a CLI that orchestrates local dev environments (containers, processes, Kubernetes) from a declarative devx.yaml manifest.",
+  "documentationURL": "https://github.com/dever-labs/devx/blob/main/docs/install.md",
+  "licenseURL": "https://github.com/dever-labs/devx/blob/main/LICENSE",
+  "options": {
+    "version": {
+      "type": "string",
+      "proposals": ["latest"],
+      "default": "latest",
+      "description": "devx version to install, e.g. 'v1.2.3' or 'latest'."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}
