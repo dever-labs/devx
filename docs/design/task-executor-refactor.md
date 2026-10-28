@@ -242,44 +242,110 @@ legacy-migrate:
 ```
 
 
-### `devx --help` reflects the manifest, not a hardcoded list
+### `devx --help` follows standard CLI conventions, not a custom format
 
-Today's CLI help is static — it lists subcommands (`up`, `status`, etc.)
-but has no knowledge of what's actually defined in a given repo's
-`devx.yaml`. With one flat task namespace, devx can generate task help
-directly from the manifest, the same way Make's `##@`/`##` + `awk`
-convention does, but built into the binary instead of hand-authored:
+devx's CLI today (`cmd/devx/main.go`) is a hand-rolled `switch` over
+`os.Args` with `fmt.Println`-based usage text — no framework, no
+generated flag parsing, no standard help shape. The original version of
+this proposal generated task help as its own bespoke "key: value" dump,
+which repeats that mistake in a new place: anyone fluent in `git`/
+`docker`/`kubectl`/`gh` already has a shape burned into muscle memory
+(`Usage:` / `Flags:` / "Use `<cmd> --help` for more info"), and a
+devx-specific layout fights that instead of using it. The fix is to
+converge on that shape, generating the task-listing *portion* from the
+manifest but keeping the surrounding structure conventional:
 
 ```
 $ devx --help
-...
-Tasks (from devx.yaml):
-  lint      golangci-lint run
-  test      go test ./...
-  db        Postgres for local dev
-  web       App dev server
-  api       Backend API                           ready: http localhost:9000/status
-  migrate   Apply DB migrations                    deps: db
+devx — lean task runner + dev environment orchestrator
+
+Usage:
+  devx <command> [flags]
+  devx <task> [flags]              (shorthand for `devx run <task>`)
+
+Commands:
+  up          Start detached tasks (+ dependencies) from devx.yaml
+  down        Stop running detached tasks
+  run         Run one or more tasks to completion
+  status      Show status of detached and one-shot tasks
+  logs        Show captured output for a task
+  tasks       List all tasks defined in devx.yaml
+  validate    Validate devx.yaml
+  doctor      Check required tools are installed
+  ...
+
+Tasks (from devx.yaml — see `devx tasks` for the full list):
+  lint        golangci-lint run
+  test        go test ./...
+  db          Postgres for local dev
+  api         Backend API                           ready: http localhost:9000/status
+  migrate     Apply DB migrations                    deps: db
+
+Flags:
+  -h, --help      help for devx
+  -v, --version   print devx version
+
+Use "devx <command> --help" for more information about a command.
+Use "devx <task> --help" for more information about a task from devx.yaml.
 
 $ devx run migrate --help
-migrate
-  deps: db
-  run:  ./scripts/migrate.sh up
+Usage:
+  devx run migrate [flags]
+
+Apply DB migrations
+
+Dependencies:
+  db
+
+Recipe:
+  ./scripts/migrate.sh up
+
+Flags:
+      --dry-run   print the resolved command, run nothing
+  -h, --help      help for run
 ```
 
+- **Commands vs. Tasks are two clearly labeled sections**, not
+  interleaved — a CLI-literate user scans `Commands:` for devx's own
+  verbs exactly like any other tool, and `Tasks:` for what *this repo*
+  defines, without needing to learn that devx blends the two.
 - `desc:` is shown when present; otherwise the (possibly truncated) `run:`
   command itself is shown, so every task is listed even with zero extra
   config — nobody has to write `desc:` just to appear in `--help`.
 - Listing is alphabetical by default; an optional `group: <string>` field
   (unset by default) lets a manifest opt into Make's `##@`-style section
-  headers in the output, without being required for `--help` to work at
-  all.
+  headers within the `Tasks:` listing (both `--help`'s capped view and
+  `devx tasks`'s full view), without being required for either to work.
+- `devx --help`'s task list is capped (e.g. 10-15 entries) with a pointer
+  to `devx tasks`/`devx tasks --group <name>` for the full list — large
+  manifests (many `includes:`) shouldn't make top-level `--help` unusably
+  long. `devx tasks` itself has no cap.
+- Per-task help (`devx run <task> --help`) mirrors a real subcommand's
+  help page: `Usage:` line, free-text `desc:` (or nothing, if unset) up
+  top, labeled sections for whatever's non-default (`Dependencies:`,
+  `Recipe:`, `Readiness:`, `Environment:`, ...), and a `Flags:` section —
+  not a flat, unlabeled key/value dump.
+- **`devx <task>` is shorthand for `devx run <task>`** (mirrors `make
+  <target>` directly, the convention this whole redesign is borrowing
+  from). Built-in command names always win on collision — a task literally
+  named `up` or `run` is still reachable via `devx run up`, but `devx up`
+  always means the built-in; `devx validate` warns on such a collision
+  since it's very likely a naming mistake, not intentional shadowing.
 - `includes:`-merged tasks show under their namespaced name (`infra:db`),
-  so `--help` reflects the real, fully-merged graph, not just the local
-  file.
+  so `--help`/`devx tasks` reflect the real, fully-merged graph, not just
+  the local file.
 - Same data backs `devx --json` output per the repo's existing convention
   (`cmd_status.go`/`cmd_doctor.go` pattern) — `devx tasks --json` dumps the
-  same structured list for tools/agents instead of scraping `--help` text.
+  full structured list for tools/agents instead of scraping `--help` text.
+
+Whether to also **adopt a real CLI framework** (`spf13/cobra` is the de
+facto standard move here — it's also what guarantees this shape stays
+consistent across every command as more are added, instead of hand-
+maintained `fmt.Println` text drifting from it over time) is a separate
+implementation decision from the *shape* above — see "Open questions".
+Notably, devx's hand-rolled `completion bash|zsh|fish` (`cmd_completion.go`)
+duplicates functionality Cobra provides for free, which is some evidence
+in favor.
 
 ## CLI surface
 
@@ -296,12 +362,13 @@ surfaced:
 | `devx up --group <name>` | **New.** Only tasks whose `group:` matches (+ their deps) — reuses the `group:` field already defined for `--help`, instead of inventing a second selection mechanism (e.g. tags). |
 | `devx run <name...>` | Run one-shot task(s) to completion, in the order given, respecting `deps:`. Multi-target, like `devx up <name...>`. |
 | `devx run <name> --dry-run` | Same dry-run semantics as `up`. |
+| `devx <name>` | **New.** Shorthand for `devx run <name>` (mirrors `make <target>`). Built-in command names always take precedence on collision — see "`devx --help`" below. |
 | `devx status` | Unchanged in spirit — detached tasks: running/ready/crashed; one-shot tasks with `sources:`/`generates:`: up to date / stale, last run time, exit code. |
 | `devx logs <name>` | Unchanged — tails captured output. For `interactive: true` tasks, `logs` has nothing captured (documented, not an error) since output went straight to the terminal when it ran. |
 | `devx down` | Unchanged — stops every running detached task in reverse dependency order. |
 | `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. |
-| `devx --help` / `devx run <name> --help` | Generated from the manifest — see above. |
-| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness) surface here as warnings, not errors. |
+| `devx --help` / `devx run <name> --help` / `devx <name> --help` | Generated from the manifest, Cobra-style — see "`devx --help` follows standard CLI conventions" above. |
+| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness), plus a task name colliding with a built-in command, surface here as warnings, not errors. |
 
 ## Example: a realistic multi-service project
 
@@ -654,10 +721,12 @@ shape as part of landing this.
    `runUpK8s` path, and `internal/providers`'s compose-shaped provider
    data — common dep kinds (postgres/redis/etc.) become default
    `run:`/`ready:` templates devx ships itself.
-5. `devx --help`/`devx tasks`/`devx tasks --json`: generate task listing
-   (name, `desc:` or truncated `run:`, `group:` section headers, `deps:`/
-   `ready:` annotations) directly from the parsed `Manifest`, replacing the
-   static subcommand-only help text for the task-listing portion.
+5. `devx --help`/`devx tasks`/`devx tasks --json`/`devx <task> --help`:
+   generate task listing and per-task help (name, `desc:` or truncated
+   `run:`, `group:` section headers, `deps:`/`ready:` annotations) in the
+   standard `Usage:`/`Commands:`/`Tasks:`/`Flags:` shape directly from
+   the parsed `Manifest`, replacing the hand-rolled `fmt.Println` usage
+   text; wire up bare `devx <task>` as shorthand for `devx run <task>`.
 6. Scheduler: parallel execution of independent graph branches by default
    (Make's `-j` behavior, not opt-in); `--dry-run` (print resolved graph +
    substituted commands) and `--keep-going` flags on `up`/`run`; multi-
@@ -708,3 +777,10 @@ releasable (there's no old behavior left to fall back to mid-rewrite).
    "what's least surprising when bootstrapping a dev environment" — should
    it default on instead, so e.g. a flaky `redis` doesn't block an
    unrelated `db`/`api` from coming up during `devx up`?
+7. Should devx adopt `spf13/cobra` (or similar) to drive the CLI, rather
+   than hand-maintaining `Usage:`/`Flags:` text that happens to match
+   Cobra's conventions? Arguments for: guarantees the shape stays
+   consistent as commands are added, gets flag parsing + shell completion
+   (replacing the hand-rolled `cmd_completion.go`) for free. Arguments
+   against: a dependency + rewrite of every `cmd_*.go` entrypoint, for a
+   CLI surface this design is trying to keep small in the first place.
