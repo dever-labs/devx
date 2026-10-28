@@ -170,6 +170,116 @@ migrate
   (`cmd_status.go`/`cmd_doctor.go` pattern) — `devx tasks --json` dumps the
   same structured list for tools/agents instead of scraping `--help` text.
 
+## Example: a realistic multi-service project
+
+A fuller project, showing every field and override in context — not just
+the two-task teaching snippet above. One repo root, one included infra
+module, one included web module.
+
+`devx.yaml` (root):
+
+```yaml
+vars:
+  PORT: 5432
+  REDIS_PORT: 6379
+  IMAGE: postgres:16
+  ENV: dev
+
+includes:
+  infra: ./infra/devx.yaml   # namespaced: infra:minio, infra:create-bucket
+  web: ./web/devx.yaml       # namespaced: web:app
+
+# ---- ad hoc commands: plain bare strings, no overrides needed ----
+# Not part of `devx up` — nothing detached depends on them, so they only
+# run via `devx run <name>`.
+lint: golangci-lint run
+fmt: gofmt -l -w .
+test: go test ./...
+
+smoke:
+  desc: One-shot smoke test against the running stack
+  deps: [web:app]              # still ad hoc: nothing depends ON smoke
+  run: ./scripts/smoke-test.sh
+
+# ---- services: part of `devx up`, fully inferred (bare string, zero config) ----
+db: docker run --rm -d --name db -p ${PORT}:5432 -e POSTGRES_PASSWORD=secret ${IMAGE}
+
+# ---- service needing a readiness override: TCP-open isn't "ready" here ----
+redis:
+  group: Services
+  desc: Redis cache
+  run: docker run --rm -d --name redis -p ${REDIS_PORT}:6379 redis:7
+  ready: { cmd: ["redis-cli", "-p", "${REDIS_PORT}", "ping"] }
+
+# ---- service needing BOTH overrides: `run:` has no port/flag for
+#      inference to key off at all ----
+queue:
+  group: Services
+  desc: Message queue (wrapper script hides the real port)
+  run: ./scripts/start-queue.sh
+  ready: { tcp: localhost:5672 }
+  detached: true
+
+# ---- data bootstrap: one-shot, chained, pulled into `up` only because
+#      `api` (a detached task) transitively depends on them ----
+migrate:
+  group: Data
+  desc: Apply DB migrations
+  deps: [db]
+  run: ./scripts/migrate.sh up
+
+seed:
+  group: Data
+  desc: Seed fixtures for ${ENV}
+  deps: [migrate]
+  run: ./scripts/seed.sh ${ENV}
+
+# ---- service with an inferred port but a non-standard health path ----
+api:
+  group: Services
+  desc: Backend API
+  deps: [migrate, infra:minio]
+  run: ./bin/api --port 9000
+  ready: { http: localhost:9000/status }
+```
+
+`infra/devx.yaml` (included as `infra:`):
+
+```yaml
+vars:
+  BUCKET: devbucket
+
+minio: docker run --rm -d --name minio -p 9100:9000 -e MINIO_ROOT_USER=admin -e MINIO_ROOT_PASSWORD=admin123 minio/minio server /data
+
+create-bucket:
+  desc: Create the dev S3 bucket
+  deps: [minio]
+  run: ./scripts/create-bucket.sh ${BUCKET}
+```
+
+`web/devx.yaml` (included as `web:`):
+
+```yaml
+app:
+  group: Web
+  desc: Frontend dev server with hot reload
+  deps: [seed, infra:minio]
+  run: npm run dev
+  ready: { http: localhost:5173 }   # override: `npm run dev` has no literal port for inference
+  detached: true                    # override: same reason — nothing to infer detached from
+```
+
+**What `devx up` actually runs**, which this example makes concrete: the
+transitive closure of every `detached: true` task's `deps:`. Walking it:
+`api` and `web:app` are the two detached tasks with deps, so `up` resolves
+their full dependency chains — `db`, `migrate` (dep of `api`), `seed` (dep
+of `web:app`, which deps on `migrate`), and `infra:minio` (dep of both) —
+plus `redis` and `queue`, detached but standalone. **Not** run by `up`:
+`lint`, `fmt`, `test`, `smoke`, and `infra:create-bucket` — one-shot tasks
+with no detached task depending on them, invoked explicitly with
+`devx run <name>` instead. This is the one rule governing `up`'s scope —
+no separate "include in up" flag needed.
+
 ## Internal architecture
 
 The manifest redesign is paired with an execution-model redesign so
@@ -314,3 +424,9 @@ independently.
 3. Version/surface coupling (CLI-shelling vs SDKs, pinned minimum
    versions) — own design doc once this lands, or folded into the
    migration plan per `Driver` as each backend is implemented?
+4. The "`up` = transitive closure of detached tasks' deps" rule (see the
+   worked example above) means a one-shot task like `infra:create-bucket`
+   silently never runs on `up` unless something detached depends on it —
+   is that surprising enough to warrant `devx validate` flagging one-shot
+   tasks that are unreachable from any detached task, in case it's a
+   forgotten `deps:` edge rather than an intentionally ad hoc command?
