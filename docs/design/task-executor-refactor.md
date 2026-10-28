@@ -415,6 +415,7 @@ surfaced:
 | `devx up --dry-run` | **New.** Print the resolved graph and every substituted `run:`/`ready:` command, execute nothing. Mirrors `make -n`. Resolved `env:` values are shown redacted (`KEY=<redacted>`), never the real secret. |
 | `devx up --keep-going` | **New.** Default is fail-fast (stop everything on first error, closest to least-surprising for a dev-env bootstrap). `--keep-going` continues unrelated branches of the graph on failure — mirrors `make -k`. |
 | `devx up --group <name>` | **New.** Only tasks whose `group:` matches (+ their deps) — reuses the `group:` field already defined for `--help`, instead of inventing a second selection mechanism (e.g. tags). |
+| `devx up --watch` | **New.** After the stack is up, watches every task in the resolved closure that has `sources:` set and restarts it (stop, re-run recipe, wait for ready again for `detached:` tasks; just re-run for one-shot `deps:` of a detached task, e.g. `migrate`) on change — the whole-stack version of `devx run <name> --watch` below, applied automatically across the graph instead of needing one `--watch` per service in separate terminals. Mirrors `docker compose up --watch`/`docker compose watch`. |
 | `devx run <name...>` | Run one-shot task(s) to completion, in the order given, respecting `deps:`. Multi-target, like `devx up <name...>`. |
 | `devx run <name> --dry-run` | Same dry-run semantics as `up`. |
 | `devx run <name> --watch` | **New.** Re-run the task whenever its `sources:` globs change (requires `sources:` to be set — error otherwise, nothing to watch). Same spirit as Docker Compose Watch, scoped to one task instead of a whole stack. |
@@ -426,6 +427,16 @@ surfaced:
 | `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`, `timeout`, `restart`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. `env:` values shown redacted, same as `--dry-run`. |
 | `devx --help` / `devx run <name> --help` / `devx <name> --help` | Generated from the manifest, Cobra-style — see "`devx --help` follows standard CLI conventions" above. |
 | `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness), plus a task name colliding with a built-in command, plus `restart:`/`timeout:` set on a non-`detached`/non-one-shot task respectively, surface here as warnings, not errors. |
+
+`--watch` (either form) is **restart-only** — stop, re-run the recipe,
+wait for ready again — not file-sync-into-a-running-container the way
+Compose Watch's `sync` action is. A task whose own tooling already
+watches and hot-reloads itself (`npm run dev`/Vite, most framework dev
+servers) doesn't need `sources:`/`--watch` at all; it's for the cases
+that don't self-watch (a Go binary needing `go build` + restart, a
+wrapper script). Consistent with "don't abstract the technology away" —
+devx doesn't try to replace a dev server's own hot-reload, only fills the
+gap for things that don't have one.
 
 ## Example: a realistic multi-service project
 
@@ -812,9 +823,11 @@ shape as part of landing this.
     running" report instead of restarting; secret redaction in
     `--dry-run`/`devx tasks --json` output for `env:` values.
 12. `devx run <name> --watch`: file-watcher on a task's `sources:` globs,
-    re-invoking the recipe on change (error if `sources:` isn't set —
-    nothing to watch); `devx exec <name> -- <cmd...>` carried over
-    unchanged onto the new `Handle.Exec`.
+    restarting the task on change (error if `sources:` isn't set —
+    nothing to watch); `devx up --watch` as the same mechanism applied
+    automatically to every `sources:`-bearing task in the resolved
+    closure; `devx exec <name> -- <cmd...>` carried over unchanged onto
+    the new `Handle.Exec`.
 
 Each step keeps `go build ./... && go test ./...` green; the full
 rewrite lands once all steps are done rather than being individually
@@ -871,3 +884,10 @@ releasable (there's no old behavior left to fall back to mid-rewrite).
     directory only, or does each included file's own directory also get
     checked for its own `.env`? The former is simpler; the latter matches
     `vars:`/`includes:` being per-file already.
+11. `devx up --watch` restarting one task (say `api`, on a source change)
+    doesn't fail the whole `up --watch` session — should a rebuild
+    failure for one task be reported inline and leave the rest of the
+    stack running (closest to "least disruptive" for a long-lived dev
+    session), or should it behave like `--keep-going`'s opposite and stop
+    everything, on the theory that a broken rebuild means the stack is no
+    longer in a known-good state?
