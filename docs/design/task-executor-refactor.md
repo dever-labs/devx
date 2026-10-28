@@ -64,9 +64,10 @@ directly, not an SDK.
 ## Manifest design
 
 A task is either a bare string (just the command — the common case, no
-config needed) or an object. Task names are **top-level keys directly** —
-no `tasks:`/`services:`/`profiles:` wrapper. `vars:` and `includes:` are
-the only other reserved top-level keys.
+config needed) or an object, needed **only** when a task has `deps:` or an
+explicit `ready:`/`detached:` override. Task names are **top-level keys
+directly** — no `tasks:`/`services:`/`profiles:` wrapper. `vars:` and
+`includes:` are the only other reserved top-level keys.
 
 ```yaml
 vars:
@@ -75,15 +76,8 @@ vars:
 
 lint: golangci-lint run
 test: go test ./...
-
-db:
-  run: docker run --rm -d --name db -p ${PORT}:5432 ${IMAGE}
-  # ready/detached not written — inferred (see below): port 5432 known,
-  # no HTTP response -> TCP readiness check; port known -> detached: true
-
-web:
-  run: docker run --rm -d -p 8080:8080 myapp
-  # inferred: port 8080 known, HTTP responds -> GET /healthz; detached: true
+db: docker run --rm -d --name db -p ${PORT}:5432 ${IMAGE}
+web: docker run --rm -d -p 8080:8080 myapp
 
 api:
   run: ./bin/api --port 9000
@@ -92,8 +86,15 @@ api:
 migrate:
   deps: [db]
   run: ./scripts/migrate.sh up
-  # inferred: no port -> no readiness wait; no port/ready -> detached: false
 ```
+
+`db`/`web` stay bare strings — nothing to configure: readiness and
+detached are both inferred purely from the command (see below), with
+zero fields written. `api` needs the object form only because it
+overrides the inferred readiness path; `migrate` needs it only because it
+declares `deps:`. The object form is never required just to attach a
+command — if a task would have no fields besides `run:`, it isn't object
+shaped at all.
 
 Full task shape: `deps: [name, ...]`, `run: <shell command>`, `ready:
 {http|tcp|cmd}` (override only), `detached: true|false` (override only).
