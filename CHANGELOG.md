@@ -58,6 +58,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `.github/dependabot.yml` (gomod + github-actions) and `.github/CODEOWNERS`.
 - Lifecycle hooks (`afterUp`, `beforeDown`) — run migrations, scripts, or exec commands inside containers at environment start/stop
 - `devx version` command — prints the binary version set at build time
+- Dev Container Feature (`ghcr.io/dever-labs/devx/devx`) to install devx in any devcontainer without a custom install step; published via `.github/workflows/publish-features.yml`
 - `scripts/install.sh` and `scripts/install.ps1` — one-liner installers
 - Integration test scaffolding under `tests/integration/`
 - Comprehensive `examples/basic/` with all profile types and stub service source

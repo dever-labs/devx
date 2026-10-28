@@ -100,6 +100,32 @@ brew upgrade --cask devx
 
 ---
 
+## Dev Containers
+
+Add devx to any [Dev Container](https://containers.dev) without hand-rolling
+an install step, via the `devx` [Feature](https://containers.dev/implementors/features/):
+
+```json
+"features": {
+    "ghcr.io/dever-labs/devx/devx:1": {}
+}
+```
+
+Pin to a specific release instead of the latest one:
+
+```json
+"features": {
+    "ghcr.io/dever-labs/devx/devx:1": {
+        "version": "v1.2.3"
+    }
+}
+```
+
+See [`features/README.md`](../features/README.md) for details and how the
+Feature is published.
+
+---
+
 ## Build from source
 
 Requires [Go 1.21+](https://go.dev/dl/).
