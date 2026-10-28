@@ -8,7 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- **Breaking**: `devx.yaml` is now a flat map of task names to task definitions (`run`/`deps`/`ready`/`detached`/...) instead of `profiles`/`services`/`deps` — see `docs/manifest.md` and `docs/design/task-executor-refactor.md`. `run:` executes directly via the system shell; nothing is rendered to Docker Compose or Kubernetes manifests anymore.
+- `devx up`/`devx run <name>` now resolve and execute the task dependency graph directly (levelized parallel execution, `--dry-run`/`--keep-going`/`--group` support) instead of shelling out to `docker compose`/`kubectl`.
+- `devx down` now stops plain-process detached tasks by signaling their recorded process-group PID (previously a no-op for anything that wasn't a container).
+- `devx <name>` is shorthand for `devx run <name>`.
+
+### Removed
+- `devx render`, `devx lock`, `devx providers`, `devx export` — no compose/k8s/helm/terraform artifact to render under the Task model; these now print a clear "not supported" error.
+- `internal/compose`, `internal/k8s`, `internal/providers`, `internal/lock` packages.
+
 ### Added
+
 - Lifecycle hooks (`afterUp`, `beforeDown`) — run migrations, scripts, or exec commands inside containers at environment start/stop
 - `devx version` command — prints the binary version set at build time
 - Multi-platform release workflow — GitHub Actions builds for Linux, macOS, Windows (amd64 + arm64) on `git tag v*`
