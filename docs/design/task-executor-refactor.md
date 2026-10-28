@@ -64,8 +64,9 @@ directly, not an SDK.
 ## Manifest design
 
 A task is either a bare string (just the command — the common case, no
-config needed) or an object, needed **only** when a task has `deps:` or an
-explicit `ready:`/`detached:` override. Task names are **top-level keys
+config needed) or an object, needed **only** when a task has `deps:`, an
+explicit `ready:`/`detached:` override, or a `desc:`. Task names are
+**top-level keys
 directly** — no `tasks:`/`services:`/`profiles:` wrapper. `vars:` and
 `includes:` are the only other reserved top-level keys.
 
@@ -97,8 +98,10 @@ command — if a task would have no fields besides `run:`, it isn't object
 shaped at all.
 
 Full task shape: `deps: [name, ...]`, `run: <shell command>`, `ready:
-{http|tcp|cmd}` (override only), `detached: true|false` (override only).
-No `driver:`/`with:` field — `run:` is plain shell, technology-neutral by
+{http|tcp|cmd}` (override only), `detached: true|false` (override only),
+`desc: <string>` (optional, drives `devx --help`), `group: <string>`
+(optional, drives section headers in `devx --help` — see below). No
+`driver:`/`with:` field — `run:` is plain shell, technology-neutral by
 construction. No before/after hooks — `deps:` is the only ordering
 primitive; there is no separate "runs after, without being a declared
 prerequisite" concept (see "Alternatives considered").
@@ -127,6 +130,45 @@ prerequisite" concept (see "Alternatives considered").
   tasks into **one** graph with namespaced task names (`infra:db`), not a
   recursive sub-process per file — see "Alternatives considered" for why
   recursive sub-invocation is the wrong model to copy from Make.
+
+### `devx --help` reflects the manifest, not a hardcoded list
+
+Today's CLI help is static — it lists subcommands (`up`, `status`, etc.)
+but has no knowledge of what's actually defined in a given repo's
+`devx.yaml`. With one flat task namespace, devx can generate task help
+directly from the manifest, the same way Make's `##@`/`##` + `awk`
+convention does, but built into the binary instead of hand-authored:
+
+```
+$ devx --help
+...
+Tasks (from devx.yaml):
+  lint      golangci-lint run
+  test      go test ./...
+  db        Postgres for local dev
+  web       App dev server
+  api       Backend API                           ready: http localhost:9000/status
+  migrate   Apply DB migrations                    deps: db
+
+$ devx run migrate --help
+migrate
+  deps: db
+  run:  ./scripts/migrate.sh up
+```
+
+- `desc:` is shown when present; otherwise the (possibly truncated) `run:`
+  command itself is shown, so every task is listed even with zero extra
+  config — nobody has to write `desc:` just to appear in `--help`.
+- Listing is alphabetical by default; an optional `group: <string>` field
+  (unset by default) lets a manifest opt into Make's `##@`-style section
+  headers in the output, without being required for `--help` to work at
+  all.
+- `includes:`-merged tasks show under their namespaced name (`infra:db`),
+  so `--help` reflects the real, fully-merged graph, not just the local
+  file.
+- Same data backs `devx --json` output per the repo's existing convention
+  (`cmd_status.go`/`cmd_doctor.go` pattern) — `devx tasks --json` dumps the
+  same structured list for tools/agents instead of scraping `--help` text.
 
 ## Internal architecture
 
@@ -250,6 +292,10 @@ one.
    `internal/providers`'s external fetch mechanism only for
    externally-sourced/long-tail kinds, clearly labeled as the non-default
    path.
+7. `devx --help`/`devx tasks`/`devx tasks --json`: generate task listing
+   (name, `desc:` or truncated `run:`, `group:` section headers, `deps:`/
+   `ready:` annotations) directly from the parsed `Manifest`, replacing the
+   static subcommand-only help text for the task-listing portion.
 
 Each step keeps `go build ./... && go test ./...` green and ships
 independently.
