@@ -1346,7 +1346,7 @@ releasable (there's no old behavior left to fall back to mid-rewrite).
 
 ## Open questions — resolved during review
 
-All 14 questions raised across earlier review passes were worked through
+All 18 questions raised across earlier review passes were worked through
 and resolved; the decisions are reflected inline in the sections above.
 Recorded here for traceability, not as still-open:
 
@@ -1354,8 +1354,8 @@ Recorded here for traceability, not as still-open:
    (see "Readiness" under "Inference").
 2. **Which fields get `${VAR}`, how to escape a literal `${`** →
    enumerated explicitly (`run`, `ready.*`, `env`, `dir`,
-   `sources`/`generates`); `$$` is Make's own escape for a literal `$`
-   (see "Variables").
+   `sources`/`generates`, `containerName`, `agents:` entries); `$$` is
+   Make's own escape for a literal `$` (see "Variables").
 3. **Version/surface coupling — own doc or folded in?** → folded into
    the implementation plan per `Driver`, no separate doc.
 4. **Warn on unreachable one-shot tasks?** → no; `lint`/`test`/`build`
@@ -1391,3 +1391,36 @@ Recorded here for traceability, not as still-open:
     the default (matches Compose precedent; no back-compat constraint
     exists for this rewrite); `-d`/`--detach` is the explicit opt-out for
     scripts/agents.
+
+Four further questions surfaced while documenting "Parallel-issue
+workflows" (workspaces/agents) and were resolved in the same review pass:
+
+15. **How does workspace-scoped port allocation actually work, given
+    `run:` is opaque shell text devx never rewrites?** → it doesn't
+    retroactively make every task workspace-safe; a new built-in
+    `${port}` substitution token (same family as `${workspace}`) must be
+    explicitly referenced in `run:`/`ready:` to get a per-workspace
+    ephemeral port. Hardcoded literal ports are untouched and only get
+    `devx validate`'s existing collision warning (see "Tier 1" under
+    "Parallel-issue workflows").
+16. **Does `scope: shared` reference counting need cross-worktree state,
+    given `.devx/` is cwd-relative per worktree?** → yes; added a
+    workspace registry anchored at `git rev-parse --git-common-dir`
+    (shared by every worktree of the same repo, still local/file-based,
+    no daemon) alongside the untouched per-worktree `.devx/` runtime
+    state, and extended `devx down` (not just `workspace rm`) to respect
+    the reference count (see "Tier 1" under "Parallel-issue workflows").
+17. **What env does `devx workspace agent` actually give the agent
+    process — the same as a task's `env:`, or something else?** → the
+    real inherited process environment, including `.env`/`.env.local`
+    (loaded once globally, same as any task); explicitly *not* `vars:`
+    (textual substitution only, never exported as real env vars) and not
+    another task's `env:` (per-task only) (see "Launching AI coding tools
+    per workspace").
+18. **What exactly does `devx workspace new <id>` do to git, and what
+    happens on a name collision?** → `git worktree add` at
+    `../<repo-dir-name>-<id>`, new branch `<id>` off the current `HEAD`;
+    errors instead of silently reusing/overwriting if that branch or
+    path already exists, pointing at `devx workspace agent <id>` to
+    re-attach to an existing one instead (see "Launching AI coding tools
+    per workspace").
