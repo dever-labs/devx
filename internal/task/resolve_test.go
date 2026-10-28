@@ -134,3 +134,20 @@ func TestUpToDate_SkipsWhenGeneratedNewer(t *testing.T) {
 		t.Fatalf("expected stale (src newer than generated)")
 	}
 }
+
+func TestRedactedEnv_RedactsAllValues(t *testing.T) {
+	out := RedactedEnv(map[string]string{"API_KEY": "super-secret", "DEBUG": "true"})
+	if len(out) != 2 {
+		t.Fatalf("expected 2 entries, got %+v", out)
+	}
+	if out["API_KEY"] != "<redacted>" || out["DEBUG"] != "<redacted>" {
+		t.Errorf("RedactedEnv() = %+v, want all values redacted", out)
+	}
+}
+
+func TestRedactedEnv_EmptyMap(t *testing.T) {
+	out := RedactedEnv(map[string]string{})
+	if len(out) != 0 {
+		t.Errorf("RedactedEnv(empty) = %+v, want empty map", out)
+	}
+}

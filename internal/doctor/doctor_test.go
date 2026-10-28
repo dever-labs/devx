@@ -330,3 +330,80 @@ func TestCheckAI_ConfiguredNoProbe(t *testing.T) {
 		t.Errorf("expected detail to mention provider/model, got %q", checks[0].Detail)
 	}
 }
+
+func TestDetectAllRuntimes_ReturnsDockerAndPodman(t *testing.T) {
+	infos := detectAllRuntimes(context.Background())
+	if len(infos) != 2 {
+		t.Fatalf("expected 2 runtime infos, got %d", len(infos))
+	}
+	names := map[string]bool{}
+	for _, info := range infos {
+		names[info.Name] = true
+	}
+	if !names["docker"] || !names["podman"] {
+		t.Errorf("detectAllRuntimes() names = %+v, want docker and podman", names)
+	}
+}
+
+func TestDetectCompose_UnknownBinaryWarns(t *testing.T) {
+	check := detectCompose(context.Background(), "devx-definitely-not-a-real-binary")
+	if check.Status != "WARN" {
+		t.Errorf("detectCompose(missing binary) status = %q, want WARN", check.Status)
+	}
+	if !strings.Contains(check.Name, "devx-definitely-not-a-real-binary") {
+		t.Errorf("detectCompose() name = %q, want it to reference the runtime", check.Name)
+	}
+}
+
+func TestRun_WithoutManifest_ReturnsSortedChecks(t *testing.T) {
+	chdirTemp(t)
+	report := Run(context.Background(), Options{})
+	if len(report.Checks) == 0 {
+		t.Fatal("expected at least one check")
+	}
+	// CLI check should always be present and PASS.
+	foundCLI := false
+	for i := 1; i < len(report.Checks); i++ {
+		if report.Checks[i-1].Name > report.Checks[i].Name {
+			t.Fatalf("checks not sorted by name: %q came before %q", report.Checks[i-1].Name, report.Checks[i].Name)
+		}
+	}
+	for _, c := range report.Checks {
+		if c.Name == "CLI" {
+			foundCLI = true
+			if c.Status != "PASS" {
+				t.Errorf("CLI check status = %q, want PASS", c.Status)
+			}
+		}
+	}
+	if !foundCLI {
+		t.Error("expected a CLI check to be present")
+	}
+}
+
+func TestRun_WithManifest_IncludesPortAndRequiresChecks(t *testing.T) {
+	dir := chdirTemp(t)
+	manifestPath := dir + "/devx.yaml"
+	if err := os.WriteFile(manifestPath, []byte(`version: 1
+project:
+  name: test
+build: echo hello
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := config.Load(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report := Run(context.Background(), Options{Manifest: m})
+	foundPorts := false
+	for _, c := range report.Checks {
+		if c.Name == "Ports" {
+			foundPorts = true
+		}
+	}
+	if !foundPorts {
+		t.Error("expected a Ports check when a manifest is provided")
+	}
+}
