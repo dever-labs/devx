@@ -46,7 +46,11 @@ func runDown(ctx context.Context, args []string) error {
 			continue
 		}
 		fmt.Printf("Stopping %s...\n", name)
-		if err := stopEntry(ctx, entry, timeout); err != nil {
+		taskTimeout := timeout
+		if !*force {
+			taskTimeout = stopTimeoutFor(m, name, timeout)
+		}
+		if err := stopEntry(ctx, entry, taskTimeout); err != nil {
 			fmt.Printf("  warning: %v\n", err)
 		}
 		state.Remove(name)
@@ -78,6 +82,22 @@ func reverseDependencyOrder(m *config.Manifest) ([]string, error) {
 		reversed[len(order)-1-i] = n
 	}
 	return reversed, nil
+}
+
+// stopTimeoutFor returns the per-task stopTimeout: override (parsed as a
+// duration) for name, falling back to def when unset, unparsable, or the
+// task isn't found (e.g. a stale state entry for a task since removed
+// from devx.yaml).
+func stopTimeoutFor(m *config.Manifest, name string, def time.Duration) time.Duration {
+	t, ok := m.Tasks[name]
+	if !ok || t.StopTimeout == "" {
+		return def
+	}
+	d, err := time.ParseDuration(t.StopTimeout)
+	if err != nil {
+		return def
+	}
+	return d
 }
 
 func stopContainerByName(ctx context.Context, name string, timeout time.Duration) error {

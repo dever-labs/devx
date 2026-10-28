@@ -88,6 +88,24 @@ func TestInfer_OneShotNoPort(t *testing.T) {
 	}
 }
 
+// TestInfer_HostPortWhenDifferentFromContainerPort guards against a
+// regression where the regex captured the container-internal port
+// instead of the host-reachable one whenever they differ.
+func TestInfer_HostPortWhenDifferentFromContainerPort(t *testing.T) {
+	cases := map[string]int{
+		"docker run -p 8080:80 nginx":           8080,
+		"docker run -p 5432:5432 postgres":      5432,
+		"docker run -p 127.0.0.1:8080:80 nginx": 8080,
+		"docker run -p 8080:80/tcp nginx":       8080,
+		"docker run --port 3000 node":           3000,
+	}
+	for run, want := range cases {
+		if got := Infer(run).Port; got != want {
+			t.Errorf("Infer(%q).Port = %d, want %d", run, got, want)
+		}
+	}
+}
+
 func TestUpToDate_SkipsWhenGeneratedNewer(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.go")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -258,6 +259,7 @@ func Load(path string) (*Manifest, error) {
 			t.Name = namespaced
 			t.SourceDir = inc.dir
 			t.ScopeVars = scopeVars
+			t.Deps = namespaceDeps(t.Deps, ns, inc.Tasks)
 			if _, collide := merged[namespaced]; collide {
 				return nil, fmt.Errorf("task %q is defined more than once", namespaced)
 			}
@@ -278,6 +280,33 @@ func mergeVars(base, override map[string]string) map[string]string {
 	}
 	for k, v := range override {
 		out[k] = v
+	}
+	return out
+}
+
+// namespaceDeps rewrites an included file's own task-local deps: entries
+// to the namespaced names they're merged under (e.g. "db" -> "infra:db"),
+// so intra-file dependencies between two tasks of the same included file
+// keep working after merging. A dep already containing ":" is assumed to
+// be an explicit cross-namespace reference (e.g. "infra:db" written
+// directly in the included file, or another namespace entirely) and is
+// left untouched; a dep that isn't one of inc's own task names is left
+// untouched too, since it may intentionally reference a root-level task.
+func namespaceDeps(deps []string, ns string, incTasks map[string]Task) []string {
+	if len(deps) == 0 {
+		return deps
+	}
+	out := make([]string, len(deps))
+	for i, d := range deps {
+		if strings.Contains(d, ":") {
+			out[i] = d
+			continue
+		}
+		if _, ok := incTasks[d]; ok {
+			out[i] = ns + ":" + d
+			continue
+		}
+		out[i] = d
 	}
 	return out
 }

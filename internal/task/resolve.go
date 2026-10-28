@@ -130,11 +130,33 @@ func LoadDotEnv(dir string) (map[string]string, error) {
 }
 
 // portPattern matches docker/CLI-style -p/--port host-port mappings,
-// e.g. "-p 5432:5432", "--port=3000", "-p 127.0.0.1:8080:80".
-var portPattern = regexp.MustCompile(`(?:-p|--publish|--port)[= ]"?(?:[\w.]+:)?(\d+):?\d*`)
+// e.g. "-p 5432:5432", "--port=3000", "-p 127.0.0.1:8080:80". The whole
+// value after the flag is captured; see portPatternHostPort for how the
+// host-reachable port is picked out of it ([ip:]hostPort:containerPort).
+var portPattern = regexp.MustCompile(`(?:-p|--publish|--port)[= ]"?([\w.:]+)`)
 
 // namePattern matches docker-style --name/-n container name flags.
 var namePattern = regexp.MustCompile(`(?:--name|-n)[= ]([\w.\-]+)`)
+
+// hostPortFromMapping extracts the host-reachable port from a docker -p
+// value, which is one of: "containerPort", "hostPort:containerPort", or
+// "ip:hostPort:containerPort" (any segment may carry a trailing
+// "/tcp"/"/udp" protocol suffix, which only ever appears on the last
+// segment). The host port is the second-to-last colon-separated field
+// when there is more than one field, otherwise the only field.
+func hostPortFromMapping(value string) (int, bool) {
+	parts := strings.Split(value, ":")
+	idx := 0
+	if len(parts) > 1 {
+		idx = len(parts) - 2
+	}
+	port := strings.SplitN(parts[idx], "/", 2)[0]
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return 0, false
+	}
+	return p, true
+}
 
 // InferredShape is what devx infers about a task purely from its run:
 // text, before any explicit field overrides are applied.
@@ -152,7 +174,7 @@ func Infer(run string) InferredShape {
 	var shape InferredShape
 
 	if m := portPattern.FindStringSubmatch(run); m != nil {
-		if p, err := strconv.Atoi(m[1]); err == nil {
+		if p, ok := hostPortFromMapping(m[1]); ok {
 			shape.Port = p
 		}
 	}

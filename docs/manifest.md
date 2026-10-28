@@ -88,7 +88,7 @@ worker:
 | `os` | list | Restrict this task to `linux`/`darwin`/`windows`; skipped (not an error) on any other OS. |
 | `timeout` | duration string | Kill the task and treat it as failed if it runs longer than this (e.g. `"30s"`, `"2m"`). |
 | `stopTimeout` | duration string | How long `devx down` waits after `SIGTERM` before `SIGKILL`. Defaults to `10s`. |
-| `restart` | `never` \| `on-failure` \| `always` | Only meaningful on a detached task. Defaults to `never`. |
+| `restart` | `never` \| `on-failure` \| `always` | Only meaningful on a detached task. Defaults to `never`. **Reserved for a later phase**: devx validates and persists this field today, but does not yet watch a detached task's process/container for exit and restart it — a crashed task simply stays dead regardless of `restart:`. |
 | `shell` | string | Override the shell used to execute `run:`. |
 | `group` | string | Logical group name, used by `devx up --group <name>` to start a subset of the graph. |
 | `scope` | `workspace` \| `shared` | Defaults to `workspace`. A `shared` task may not reference `${workspace}`/`${port}`-style per-workspace substitutions, since it's meant to be started once and reused across workspaces (see the workspace/agents design). |

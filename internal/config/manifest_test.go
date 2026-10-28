@@ -108,6 +108,54 @@ create-bucket: mc mb local/${BUCKET}
 	}
 }
 
+// TestLoad_NamespacesIntraIncludeDeps guards against a regression where
+// an included file's own deps: entries (referring to another task
+// defined in that same included file) were left un-namespaced, making
+// them unresolvable after merging into the root graph.
+func TestLoad_NamespacesIntraIncludeDeps(t *testing.T) {
+	dir := t.TempDir()
+	infraDir := filepath.Join(dir, "infra")
+	if err := os.MkdirAll(infraDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	root := `version: 1
+project:
+  name: my-app
+includes:
+  infra: infra/devx.yaml
+`
+	infra := `version: 1
+db:
+  run: echo db
+app:
+  deps: [db]
+  run: echo app
+`
+	if err := os.WriteFile(filepath.Join(dir, "devx.yaml"), []byte(root), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(infraDir, "devx.yaml"), []byte(infra), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := Load(filepath.Join(dir, "devx.yaml"))
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	app, ok := m.Tasks["infra:app"]
+	if !ok {
+		t.Fatalf("expected namespaced task 'infra:app', got: %v", m.Tasks)
+	}
+	if len(app.Deps) != 1 || app.Deps[0] != "infra:db" {
+		t.Fatalf("expected infra:app deps to be namespaced to [infra:db], got %v", app.Deps)
+	}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected merged manifest to validate cleanly, got: %v", err)
+	}
+}
+
 func TestValidate_RequiresRun(t *testing.T) {
 	m := &Manifest{Version: 1, Tasks: map[string]Task{"bad": {Name: "bad"}}}
 	err := Validate(m)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"time"
 
 	"github.com/dever-labs/devx/internal/task"
 )
@@ -103,10 +104,12 @@ func streamPrefixed(ctx context.Context, label string, f *os.File, follow bool, 
 		if err := scanner.Err(); err != nil {
 			return err
 		}
+		// No new data yet — avoid busy-spinning a full CPU core while
+		// waiting for the next line, matching internal/task's followReader.
 		select {
 		case <-ctx.Done():
 			return nil
-		default:
+		case <-time.After(300 * time.Millisecond):
 		}
 	}
 }

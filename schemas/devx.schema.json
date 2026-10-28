@@ -164,7 +164,7 @@
           "restart": {
             "type": "string",
             "enum": ["never", "on-failure", "always"],
-            "description": "Only meaningful for detached tasks. Defaults to never."
+            "description": "Only meaningful for detached tasks. Defaults to never. Reserved for a later phase: validated and persisted today, but devx does not yet restart a detached task after its process/container exits."
           },
           "shell": { "type": "string", "description": "Overrides the shell used to run run: (defaults to sh -c on Unix, cmd /C on Windows)." },
           "group": { "type": "string", "description": "Logical grouping used by 'devx up --group <name>' to run a subset of the graph." },
