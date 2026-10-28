@@ -13,7 +13,9 @@ import (
 	"time"
 )
 
-const (
+// releasesAPI and releaseDL are vars (not consts) so tests can point them
+// at a local httptest.Server instead of the real GitHub endpoints.
+var (
 	releasesAPI = "https://api.github.com/repos/dever-labs/devx/releases/latest"
 	releaseDL   = "https://github.com/dever-labs/devx/releases/download"
 )
