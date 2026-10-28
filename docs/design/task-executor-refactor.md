@@ -112,10 +112,16 @@ every matched `sources:` file — see "Incremental skip" below), `port:
 "Inference" below), `timeout: <duration>` (optional, hard ceiling on a
 one-shot recipe or a readiness wait — see "Reliability" below), `restart:
 never|on-failure|always` (optional, only for `detached: true` tasks —
-see "Reliability" below), `shell: bash|sh|cmd|powershell|pwsh|<path>`
-(optional, opt out of the embedded shell interpreter for this task — see
-"`run:` execution" below). No `driver:`/`with:` field — `run:` is plain
-shell, technology-neutral by construction. No before/after hooks —
+see "Reliability" below), `stopTimeout: <duration>` (optional,
+detached-only, grace period before escalating a stop — see "Reliability"
+below), `shell: bash|sh|cmd|powershell|pwsh|<path>` (optional, opt out of
+the embedded shell interpreter for this task — see "`run:` execution"
+below), `dir: <path>` (optional, working directory for `run:` and the
+base for relative `sources:`/`generates:` globs — see "Working directory"
+below), `requires: [tool, ...]` (optional, external binaries this task's
+`run:` needs on `PATH` — see "Reliability" below). No `driver:`/`with:`
+field — `run:` is plain shell, technology-neutral by construction. No
+before/after hooks —
 `deps:` is the only ordering primitive; there is no separate "runs after,
 without being a declared prerequisite" concept (see "Alternatives
 considered").
@@ -173,6 +179,17 @@ considered").
   tasks into **one** graph with namespaced task names (`infra:db`), not a
   recursive sub-process per file — see "Alternatives considered" for why
   recursive sub-invocation is the wrong model to copy from Make.
+- **Working directory**: `run:` (and relative `sources:`/`generates:`
+  globs) execute with the defining `devx.yaml` file's own directory as
+  the working directory by default — for the root manifest that's the
+  repo root; for an `includes:`-merged file (e.g. `web/devx.yaml`) it's
+  that file's directory, not the root's. This removes the `cd web && ...`
+  boilerplate an included file's tasks would otherwise need in every
+  `run:` line, and resolves what would otherwise be an unstated ambiguity
+  the moment a manifest uses `includes:` across directories. `dir:
+  <path>` overrides this per task (relative to the defining file's
+  directory, or absolute) for the rare case a task needs a directory
+  other than its own file's.
 
 ### Reliability (matters as much to an AI agent driving devx as to a human)
 
@@ -215,6 +232,33 @@ new abstractions:
   chat/an issue and an agent echoing tool output verbatim (a documented
   failure mode for AI coding tools generally) are realistic leak paths,
   not hypothetical ones.
+- **Graceful stop, driver-aware**: `Handle.Stop()`'s actual mechanism
+  differs by what `run:` launched, and the design didn't previously say
+  so. For a plain detached process (`processDriver`), `Stop()` sends
+  SIGTERM to the process group, waits up to `stopTimeout:` (optional,
+  conservative default — e.g. 10s, mirroring Docker's own default grace
+  period), then SIGKILL. For a container (`run:` parsed as `docker run`/
+  `docker compose`, the same `--name`/service-name parsing already used
+  for port inference), `Stop()` calls `docker stop <name>` instead — the
+  launched `docker run -d` process has already exited by the time `Stop()`
+  runs (that's what `-d` means), so there's no live process on devx's
+  side to signal directly; `docker stop` itself already implements the
+  SIGTERM-then-grace-then-SIGKILL contract, so devx doesn't reimplement
+  it, just invokes it (with `stopTimeout:` passed through as `docker
+  stop -t <seconds>` when set).
+- **Port-collision detection**: since ports are inferred silently from
+  `run:` text (or `port:`), `devx validate` flags two tasks that resolve
+  to the same port as a warning — otherwise the only symptom is one task
+  failing to bind at `up` time with a generic "address already in use"
+  error that doesn't point at the actual conflicting task.
+- **`requires: [tool, ...]`** — the external binaries a task's `run:`
+  needs on `PATH` (`docker`, `kubectl`, `brew`, ...), checked by `devx
+  doctor` and by `devx validate`/`devx up`/`devx run` before dispatching
+  the recipe, surfaced as "`web` needs `docker`, which isn't installed —
+  see `devx doctor`" instead of an opaque shell "command not found."
+  Optional — `run:` stays plain shell either way; `requires:` only adds a
+  better error message ahead of a failure devx can't otherwise predict,
+  since it never parses `run:` beyond port/`--name` sniffing.
 
 ### Additional optional fields (from Make / modern task runners)
 
@@ -324,11 +368,26 @@ smoke:
   timeout: 30s
   run: ./scripts/smoke-test.sh
 
-# --- restart: (only for detached: true) ---
+# --- restart: / stopTimeout: (only for detached: true) ---
 db:
   desc: Postgres for local dev, restarted if the container dies
   run: docker run --rm -d --name db -p ${PORT}:5432 ${IMAGE}
   restart: on-failure
+  stopTimeout: 15s      # give Postgres longer than the 10s default to
+                        # shut down cleanly before `docker stop` escalates
+
+# --- dir: (working directory override) ---
+build-web:
+  desc: Build the frontend bundle
+  dir: ./web            # relative to this file's own directory
+  run: npm run build    # equivalent to `cd web && npm run build`, but
+                        # composable with includes: across directories
+
+# --- requires: (external tools this recipe needs) ---
+deploy-local:
+  desc: Apply manifests to the local k3d cluster
+  requires: [kubectl]   # `devx doctor`/`validate` report this clearly
+  run: kubectl apply -f ./k8s/local
 ```
 
 
@@ -445,7 +504,8 @@ surfaced:
 
 | Command | Behavior |
 |---|---|
-| `devx up` | Transitive closure of every `detached: true` task's `deps:` (see worked example below for the exact rule). Independent one-shot branches run in parallel, not strictly sequential — mirrors Make's `-j` by default, not an opt-in flag. **Idempotent**: tasks already running/ready are reported and skipped, not restarted — safe to re-run, including by an agent retrying after an ambiguous result. |
+| `devx up` | Transitive closure of every `detached: true` task's `deps:` (see worked example below for the exact rule). Independent one-shot branches run in parallel, not strictly sequential — mirrors Make's `-j` by default, not an opt-in flag. **Idempotent**: tasks already running/ready are reported and skipped, not restarted — safe to re-run, including by an agent retrying after an ambiguous result. **Default attached**: streams every started task's logs interleaved, name-prefixed and colored, to the terminal (mirrors `docker compose up`'s own default); Ctrl-C stops the stack (equivalent to `devx down`) rather than detaching. |
+| `devx up -d` / `--detach` | **New.** Start the stack and return immediately instead of attaching to logs — mirrors `docker compose up -d`, for scripts/agents that don't want a foregrounded terminal. |
 | `devx up <name...>` | **New.** Partial up — only the named tasks + their transitive deps, not the whole closure. Mirrors `make a b c`. |
 | `devx up --dry-run` | **New.** Print the resolved graph and every substituted `run:`/`ready:` command, execute nothing. Mirrors `make -n`. Resolved `env:` values are shown redacted (`KEY=<redacted>`), never the real secret. |
 | `devx up --keep-going` | **New.** Default is fail-fast (stop everything on first error, closest to least-surprising for a dev-env bootstrap). `--keep-going` continues unrelated branches of the graph on failure — mirrors `make -k`. |
@@ -456,12 +516,14 @@ surfaced:
 | `devx run <name> --watch` | **New.** Re-run the task whenever its `sources:` globs change (requires `sources:` to be set — error otherwise, nothing to watch). Same spirit as Docker Compose Watch, scoped to one task instead of a whole stack. |
 | `devx <name>` | **New.** Shorthand for `devx run <name>` (mirrors `make <target>`). Built-in command names always take precedence on collision — see "`devx --help`" below. |
 | `devx status` | Unchanged in spirit — detached tasks: `running`/`ready`/`crashed`/`restarting` (per `restart:`); one-shot tasks with `sources:`/`generates:`: up to date / stale, last run time, exit code. |
-| `devx logs <name>` | Unchanged — tails captured output. For `interactive: true` tasks, `logs` has nothing captured (documented, not an error) since output went straight to the terminal when it ran. |
+| `devx logs` | **New.** With no task name: tails every currently-running detached task's output interleaved, name-prefixed and colored, in one stream — the same engine `devx up`'s default attached mode uses, available standalone for re-attaching to an already-`-d`-started stack. |
+| `devx logs <name>` | Unchanged — tails captured output for one task. For `interactive: true` tasks, `logs` has nothing captured (documented, not an error) since output went straight to the terminal when it ran. |
 | `devx exec <name> -- <cmd...>` | Unchanged from today — run `<cmd>` inside a running `detached: true` task's context (container/process), via `Handle.Exec`. Errors if the task isn't currently running. |
-| `devx down` | Unchanged — stops every running detached task in reverse dependency order. |
-| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`, `timeout`, `restart`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. `env:` values shown redacted, same as `--dry-run`. |
+| `devx down` | Unchanged — stops every running detached task in reverse dependency order. Graceful by default (see "Graceful stop, driver-aware" under "Reliability": SIGTERM/`docker stop` + grace period from `stopTimeout:`, then force); `devx down --force` skips straight to SIGKILL/`docker kill`. |
+| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`, `timeout`, `restart`, `stopTimeout`, `dir`, `requires`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. `env:` values shown redacted, same as `--dry-run`. |
 | `devx --help` / `devx run <name> --help` / `devx <name> --help` | Generated from the manifest, Cobra-style — see "`devx --help` follows standard CLI conventions" above. |
-| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness), plus a task name colliding with a built-in command, plus `restart:` set on a non-`detached` task (meaningless — nothing to restart), surface here as warnings, not errors. `timeout:` has no such check: it's valid on both one-shot recipes and detached tasks' `ready:` waits, so there's no task shape it's ever a mistake on. |
+| `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness), plus a task name colliding with a built-in command, plus `restart:` set on a non-`detached` task (meaningless — nothing to restart), plus two tasks resolving to the same port (see "Port-collision detection" under "Reliability"), surface here as warnings, not errors. `timeout:` has no such check: it's valid on both one-shot recipes and detached tasks' `ready:` waits, so there's no task shape it's ever a mistake on. |
+| `devx doctor` | Extended to also check every task's `requires:` binaries are on `PATH`, not just devx's own built-in tool checks — surfaces "`web` needs `docker`, which isn't installed" per task instead of only devx's own dependencies. |
 
 `--watch` (either form) is **restart-only** — stop, re-run the recipe,
 wait for ready again — not file-sync-into-a-running-container the way
@@ -655,6 +717,9 @@ type Task struct {
     Port        int           // 0 = infer by parsing Run; set only when parsing can't find it
     Timeout     time.Duration // 0 = built-in conservative default, not unbounded
     Restart     string        // "never" (default) | "on-failure" | "always"; detached-only
+    StopTimeout time.Duration // 0 = built-in conservative default; detached-only
+    Dir         string        // "" = defining file's own directory
+    Requires    []string      // external binaries on PATH this task's Run needs
 }
 
 type ReadyCheck struct {
@@ -878,6 +943,24 @@ shape as part of landing this.
     automatically to every `sources:`-bearing task in the resolved
     closure; `devx exec <name> -- <cmd...>` carried over unchanged onto
     the new `Handle.Exec`.
+13. `dir:` resolution (default: the defining `devx.yaml` file's own
+    directory, including per-`includes:`-file; override via `dir:`) as
+    the working directory for `run:` and the base for relative
+    `sources:`/`generates:` globs.
+14. Driver-aware `Stop()`: `processDriver` sends SIGTERM to the process
+    group, waits `stopTimeout:` (conservative default when unset), then
+    SIGKILL; `commandDriver` for a container-shaped `run:` instead calls
+    `docker stop [-t <stopTimeout>] <name>` (name parsed the same way as
+    port inference), falling back to `docker kill` on `devx down
+    --force`. `devx up`'s default attached mode (interleaved, name-
+    prefixed logs; Ctrl-C triggers the same stop path) and `devx up -d`/
+    `devx logs` (no args, same combined-stream engine) reuse this.
+15. `requires:` checked by `devx doctor` (extended to walk every task's
+    `requires:`, not just devx's own built-in tool checks) and by
+    `devx validate`/before `up`/`run` dispatch a recipe, producing a
+    named "`<task>` needs `<tool>`" error instead of a generic shell
+    "command not found"; `devx validate` also flags two tasks resolving
+    to the same inferred/declared port.
 
 Each step keeps `go build ./... && go test ./...` green; the full
 rewrite lands once all steps are done rather than being individually
@@ -944,3 +1027,21 @@ releasable (there's no old behavior left to fall back to mid-rewrite).
     session), or should it behave like `--keep-going`'s opposite and stop
     everything, on the theory that a broken rebuild means the stack is no
     longer in a known-good state?
+12. `dir:`'s default (the defining file's own directory) means moving a
+    task between files (e.g. pulling one out of an `includes:`-merged
+    file into the root manifest) silently changes its working directory
+    unless `dir:` is written explicitly — is that surprising enough for
+    `devx validate`/`--dry-run` to always show the resolved `dir:` even
+    when it's inferred, so it's never silently implicit?
+13. `commandDriver`'s `Stop()` relies on parsing `--name`/a service name
+    out of `run:` the same way port inference does — what should happen
+    when that parsing fails for a container-shaped `run:` (no `--name`
+    flag)? Warn at `validate` time (same spirit as open question #1 for
+    ports), since `Stop()` would otherwise have nothing to act on and the
+    container would be orphaned on `devx down`?
+14. `devx up`'s new default-attached/interleaved-logs mode is a real
+    behavior change for anyone scripting against today's `devx up`
+    (which just starts the stack and returns) — should `-d` eventually
+    become the default instead (matching the more automation-friendly
+    choice, at the cost of diverging from Compose's own default), given
+    devx's dual human/agent audience?
