@@ -107,16 +107,18 @@ windows]` (optional, skip this task entirely on other platforms),
 `interactive: true|false` (optional, attach stdin/stdout/stderr directly
 instead of capturing for `logs`), `sources: [glob, ...]` / `generates:
 [glob, ...]` (optional, skip re-running if `generates:` is newer than
-every matched `sources:` file — see "Incremental skip" below). No
-`driver:`/`with:` field — `run:` is plain shell, technology-neutral by
-construction. No before/after hooks — `deps:` is the only ordering
-primitive; there is no separate "runs after, without being a declared
-prerequisite" concept (see "Alternatives considered").
+every matched `sources:` file — see "Incremental skip" below), `port:
+<int>` (optional, override when `run:`'s port can't be parsed — see
+"Inference" below). No `driver:`/`with:` field — `run:` is plain shell,
+technology-neutral by construction. No before/after hooks — `deps:` is
+the only ordering primitive; there is no separate "runs after, without
+being a declared prerequisite" concept (see "Alternatives considered").
 
 ### Inference, not required config
 
 - **Readiness**: if `run:` exposes a port (parsed from `-p`/`--port`, or
-  an explicit `port:` field), default to an HTTP GET on
+  an explicit `port:` field for launchers the parser can't read — a
+  wrapper script, a non-Docker command), default to an HTTP GET on
   `http://localhost:<port>/healthz` with short retry/timeout; if that
   exchange fails for *any* reason other than a clean 2xx/3xx/4xx HTTP
   response — connection refused, reset, timeout, or a non-HTTP peer
@@ -129,9 +131,12 @@ prerequisite" concept (see "Alternatives considered").
   a bare process. `ready:` only needs to be written to override this
   (non-standard path, or a `cmd:` check — exit code `0` means ready, any
   other exit code or a timeout means not-yet-ready and the check retries).
-- **Detached vs one-shot**: a task with a port or a `ready:` is almost
-  certainly long-running, so default `detached: true`; otherwise default
-  `detached: false` (block until exit code). Named `detached` (the term
+- **Detached vs one-shot**: a task with a port (parsed or `port:`) *or* a
+  `ready:` (inferred or explicit) is almost certainly long-running, so
+  default `detached: true`; otherwise default `detached: false` (block
+  until exit code). Writing `ready:` already implies `detached: true` —
+  there's never a need to write both just because `run:` itself has no
+  literally-parseable port. Named `detached` (the term
   the ecosystem already uses for this — Docker's own `-d`/`--detach`
   flag) rather than `background`/`service`, so it needs no definition.
   `detached:` is only written to override the inference.
@@ -153,13 +158,18 @@ out:
 
 - **`env: {KEY: value}`** — raw environment variables passed to the
   task's subprocess only. Deliberately separate from `vars:`: `vars:` are
-  resolved by devx itself via `${VAR}` substitution into manifest string
-  fields (so they can appear in `ready.http`, not just `run:`); `env:` is
-  passed straight through to the OS process environment, untouched by
-  substitution, which is where host-provided secrets belong (consistent
-  with the repo's existing convention that secrets are never written into
-  `devx.yaml` — `env:` values are typically `${HOST_ENV_VAR}` references
-  resolved from the *inherited* shell environment, not literals).
+  devx's own named values (CLI override > inherited env > `vars:`
+  defaults) substituted into manifest string fields like `run:`/
+  `ready.http`; `env:` keys go straight into the subprocess's OS
+  environment instead of a manifest field, which is where host-provided
+  secrets belong (consistent with the repo's existing convention that
+  secrets are never written into `devx.yaml`). `${VAR}` substitution
+  still applies to `env:` *values* the same as any other string field —
+  `env: { DB_PASSWORD: ${HOST_DB_PASSWORD} }` resolves
+  `${HOST_DB_PASSWORD}` from the inherited shell environment (never a
+  literal secret in `devx.yaml`) before setting `DB_PASSWORD` in the
+  subprocess's environment. The distinction is the *destination*
+  (subprocess env vs. a manifest field), not whether substitution runs.
 - **`os: [linux, darwin, windows]`** — skip this task entirely (not an
   error) when the host OS isn't in the list. Relevant because devx already
   does cross-platform tool detection/`doctor`; some recipes (Homebrew
@@ -289,7 +299,7 @@ surfaced:
 | `devx status` | Unchanged in spirit — detached tasks: running/ready/crashed; one-shot tasks with `sources:`/`generates:`: up to date / stale, last run time, exit code. |
 | `devx logs <name>` | Unchanged — tails captured output. For `interactive: true` tasks, `logs` has nothing captured (documented, not an error) since output went straight to the terminal when it ran. |
 | `devx down` | Unchanged — stops every running detached task in reverse dependency order. |
-| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `os`, `interactive`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. |
+| `devx tasks` / `devx tasks --json` | **New.** Dumps the full resolved task list (name, `desc`, `group`, `deps`, `ready`, `detached`, `env`, `os`, `interactive`, `sources`, `generates`, `shell`) — the structured data backing `--help`, consumable by tools/agents per the repo's `--json` convention. |
 | `devx --help` / `devx run <name> --help` | Generated from the manifest — see above. |
 | `devx validate` | Unchanged command, extended checks: open questions #1 and #4 (unreachable one-shot tasks, uninferrable readiness) surface here as warnings, not errors. |
 
@@ -355,14 +365,14 @@ redis:
   run: docker run --rm -d --name redis -p ${REDIS_PORT}:6379 redis:7
   ready: { cmd: ["redis-cli", "-p", "${REDIS_PORT}", "ping"] }
 
-# ---- service needing BOTH overrides: `run:` has no port/flag for
-#      inference to key off at all ----
+# ---- service needing ONE override: `run:` has no port/flag for
+#      inference to key off at all — writing `ready:` alone already
+#      implies detached: true, no need to also write it ----
 queue:
   group: Services
   desc: Message queue (wrapper script hides the real port)
   run: ./scripts/start-queue.sh
   ready: { tcp: localhost:5672 }
-  detached: true
 
 # ---- data bootstrap: one-shot, chained, pulled into `up` only because
 #      `api` (a detached task) transitively depends on them ----
@@ -409,8 +419,8 @@ app:
   desc: Frontend dev server with hot reload
   deps: [seed, infra:minio]
   run: npm run dev
-  ready: { http: localhost:5173 }   # override: `npm run dev` has no literal port for inference
-  detached: true                    # override: same reason — nothing to infer detached from
+  ready: { http: localhost:5173 }   # override: `npm run dev` has no literal
+                                     # port for inference; implies detached: true
 ```
 
 **What `devx up` actually runs**, which this example makes concrete: the
@@ -429,7 +439,10 @@ A few CLI invocations against this same manifest:
 ```sh
 devx up                        # everything above
 devx up db redis               # just those two + nothing else (no deps)
-devx up --group Services       # db, redis, queue, api, web:app + their deps
+devx up --group Services       # redis, queue (standalone) + api, migrate,
+                                # db, infra:minio (api's transitive deps);
+                                # NOT web:app — it's `group: Web`, and
+                                # nothing Services-tagged depends on it
 devx up --dry-run              # print the resolved graph + substituted
                                 # commands, run nothing
 devx up --keep-going           # if `redis` fails to start, `db`/`queue`/
@@ -459,6 +472,7 @@ type Task struct {
     Sources     []string // glob patterns
     Generates   []string // glob patterns
     Shell       string   // "" (default, embedded) | "bash" | "sh" | "cmd" | "powershell" | "pwsh" | a custom path
+    Port        int      // 0 = infer by parsing Run; set only when parsing can't find it
 }
 
 type ReadyCheck struct {
@@ -677,7 +691,7 @@ releasable (there's no old behavior left to fall back to mid-rewrite).
    need escaping for a literal `$` inside a recipe?
 3. Version/surface coupling (CLI-shelling vs SDKs, pinned minimum
    versions) — own design doc once this lands, or folded into the
-   migration plan per `Driver` as each backend is implemented?
+   implementation plan per `Driver` as each backend is built?
 4. The "`up` = transitive closure of detached tasks' deps" rule (see the
    worked example above) means a one-shot task like `infra:create-bucket`
    silently never runs on `up` unless something detached depends on it —
