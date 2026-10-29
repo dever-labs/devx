@@ -90,12 +90,12 @@ devx version
 
 ```sh
 brew tap dever-labs/tap https://github.com/dever-labs/homebrew-tap
-brew install devx
+brew install --cask devx
 ```
 
 To upgrade:
 ```sh
-brew upgrade devx
+brew upgrade --cask devx
 ```
 
 ---
@@ -145,7 +145,7 @@ Releases are fully automated:
 1. Merge Conventional Commit-style PRs (`feat:`, `fix:`, `fix!:`/`BREAKING CHANGE:`, etc.) to `main`.
 2. [release-please](https://github.com/googleapis/release-please) opens/updates a "Release PR" that bumps the version and rewrites `CHANGELOG.md` from those commits.
 3. Merging the Release PR makes release-please tag the commit and publish a GitHub Release.
-4. That `release: created` event triggers [goreleaser](https://goreleaser.com) (see `.goreleaser.yaml`), which builds all platform binaries, generates `checksums.txt`, attaches them to the release, and pushes an updated formula to `dever-labs/homebrew-tap`.
+4. That `release: created` event triggers [goreleaser](https://goreleaser.com) (see `.goreleaser.yaml`), which builds all platform binaries, generates `checksums.txt`, attaches them to the release, and pushes an updated Homebrew Cask to `dever-labs/homebrew-tap`.
 
-No manual tagging, changelog editing, or Homebrew formula updates are needed.
+No manual tagging, changelog editing, or Homebrew Cask updates are needed.
 

@@ -36,7 +36,7 @@ iwr https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.ps1 |
 **Homebrew (macOS / Linux)**
 ```sh
 brew tap dever-labs/tap https://github.com/dever-labs/homebrew-tap
-brew install devx
+brew install --cask devx
 ```
 
 Pre-built binaries for all platforms are also available on the
