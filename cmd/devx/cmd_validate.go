@@ -38,6 +38,7 @@ func runValidate(args []string) error {
 	collect(config.Validate(manifest))
 	collect(config.ValidateTools(manifest))
 	collect(config.ValidateSetup(manifest))
+	collect(config.ValidateEnvFiles(manifest))
 	issues = append(issues, extendedWarnings(manifest)...)
 
 	if len(issues) > 0 {

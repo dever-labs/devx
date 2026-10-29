@@ -73,7 +73,7 @@ Environment is up
 | Command | Description |
 |---|---|
 | `devx init` | Interactive scaffold: `devx.yaml` (+ optional devcontainer) |
-| `devx setup [--fix] [--json]` | Install required tools and run host-side setup steps |
+| `devx setup [--fix] [--json] [--no-prompt]` | Install required tools, run host-side setup steps, and scaffold `envFiles:` |
 | `devx up [<name...>] [-d\|--detach] [--dry-run] [--keep-going] [--group <name>]` | Bring up the task graph (or a partial closure) |
 | `devx run <name...> [--dry-run] [--watch]` | Run task(s) directly, respecting `deps:` |
 | `devx <name>` | Shorthand for `devx run <name>` |

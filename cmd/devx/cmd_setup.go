@@ -14,6 +14,7 @@ func runSetup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
 	fix := fs.Bool("fix", false, "Re-run runOnce steps and install missing tools")
 	outputJSON := fs.Bool("json", false, "Emit results as JSON")
+	noPrompt := fs.Bool("no-prompt", false, "Never prompt for envFiles values; fail fast if one can't be resolved from env/default")
 	_ = fs.Parse(args)
 
 	manifest, err := loadManifest()
@@ -26,6 +27,7 @@ func runSetup(ctx context.Context, args []string) error {
 		// Route subprocess stdout to stderr so JSON stdout stays clean.
 		opts.Stdout = os.Stderr
 	}
+	opts.Interactive = !*outputJSON && !*noPrompt && stdinIsTerminal()
 	allResults := []setup.Result{}
 
 	if len(manifest.Tools) > 0 {
@@ -44,6 +46,14 @@ func runSetup(ctx context.Context, args []string) error {
 		allResults = append(allResults, results...)
 	}
 
+	if len(manifest.EnvFiles) > 0 {
+		if !*outputJSON {
+			fmt.Println("Scaffolding env files...")
+		}
+		results := setup.RunEnvFiles(manifest.Dir(), manifest.EnvFiles, opts)
+		allResults = append(allResults, results...)
+	}
+
 	if *outputJSON {
 		data, err := json.MarshalIndent(allResults, "", "  ")
 		if err != nil {
@@ -54,7 +64,7 @@ func runSetup(ctx context.Context, args []string) error {
 	}
 
 	if len(allResults) == 0 {
-		fmt.Println("Nothing to do — no tools or setup steps declared in devx.yaml")
+		fmt.Println("Nothing to do — no tools, setup steps, or envFiles declared in devx.yaml")
 		return nil
 	}
 
@@ -82,7 +92,7 @@ func runSetup(ctx context.Context, args []string) error {
 
 func setupStatusIcon(status string) string {
 	switch status {
-	case "ok", "installed":
+	case "ok", "installed", "written":
 		return "✓"
 	case "skipped", "not-applicable":
 		return "–"
@@ -91,4 +101,15 @@ func setupStatusIcon(status string) string {
 	default:
 		return "?"
 	}
+}
+
+// stdinIsTerminal reports whether stdin looks like an interactive terminal
+// (as opposed to a pipe, redirect, or /dev/null) — used to decide whether
+// prompting for envFiles values can succeed instead of blocking forever.
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
