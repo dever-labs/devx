@@ -162,6 +162,12 @@ setup:
 OS, then runs `setup:` steps in order. A `runOnce: true` step is skipped on a later
 `devx setup` if its `run:` command's content hasn't changed since the last successful run.
 
+`devx init` auto-detects a JS/TS package manager and workspace layout from an existing
+`package.json` (`packageManager` field, lockfile, or `workspaces`/`pnpm-workspace.yaml`) and
+writes a single root-level `setup:` install step for the detected manager (`npm install`,
+`yarn install`, or `pnpm install`) — this covers the common "install once at the workspace
+root" pattern for yarn/npm/pnpm monorepos without per-package `run:`/`cwd:` boilerplate.
+
 ---
 
 ## CLI commands

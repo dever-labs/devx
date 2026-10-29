@@ -10,6 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func writeInitTestFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWriteInitManifest_WritesParseableYAML(t *testing.T) {
 	dir := chdirTemp(t)
 
@@ -52,6 +59,83 @@ func TestWriteInitManifest_WithAI(t *testing.T) {
 	}
 	if _, ok := out["ai"]; !ok {
 		t.Errorf("expected an 'ai:' block when withAI=true, got %v", out)
+	}
+}
+
+func TestWriteInitManifest_NodeWithYarnWorkspaceAddsRootSetupStep(t *testing.T) {
+	dir := chdirTemp(t)
+	writeInitTestFile(t, dir, "package.json", `{"name": "monorepo", "workspaces": ["packages/*"], "packageManager": "yarn@4.1.0"}`)
+
+	if err := writeInitManifest("my-app", "node", false); err != nil {
+		t.Fatalf("writeInitManifest failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Setup []struct {
+			Name    string `yaml:"name"`
+			Run     string `yaml:"run"`
+			RunOnce bool   `yaml:"runOnce"`
+		} `yaml:"setup"`
+		Build struct {
+			Run string `yaml:"run"`
+		} `yaml:"build"`
+		Test struct {
+			Run string `yaml:"run"`
+		} `yaml:"test"`
+	}
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		t.Fatalf("produced invalid YAML: %v\n%s", err, data)
+	}
+	if len(out.Setup) != 1 {
+		t.Fatalf("expected exactly one setup step, got %v\n%s", out.Setup, data)
+	}
+	if out.Setup[0].Run != "yarn install" {
+		t.Errorf("setup step run = %q, want %q", out.Setup[0].Run, "yarn install")
+	}
+	if !out.Setup[0].RunOnce {
+		t.Error("expected the detected install step to be runOnce: true")
+	}
+	if out.Build.Run != "yarn build" {
+		t.Errorf("build task run = %q, want %q", out.Build.Run, "yarn build")
+	}
+	if out.Test.Run != "yarn test" {
+		t.Errorf("test task run = %q, want %q", out.Test.Run, "yarn test")
+	}
+}
+
+func TestWriteInitManifest_NodePlainPackageUsesNPM(t *testing.T) {
+	dir := chdirTemp(t)
+	writeInitTestFile(t, dir, "package.json", `{"name": "app"}`)
+
+	if err := writeInitManifest("my-app", "node", false); err != nil {
+		t.Fatalf("writeInitManifest failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "run: npm install") {
+		t.Errorf("expected an npm install setup step, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "run: npm run build") {
+		t.Errorf("expected npm run build task, got:\n%s", data)
+	}
+}
+
+func TestWriteInitManifest_NodeWithoutPackageJSONHasNoSetupBlock(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := writeInitManifest("my-app", "node", false); err != nil {
+		t.Fatalf("writeInitManifest failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "setup:") {
+		t.Errorf("expected no setup: block without a package.json to detect, got:\n%s", data)
 	}
 }
 
