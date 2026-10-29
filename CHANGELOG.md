@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [0.1.3](https://github.com/dever-labs/devx/compare/v0.1.2...v0.1.3) (2026-10-29)
+
+
+### Features
+
+* add devx Dev Container Feature ([#19](https://github.com/dever-labs/devx/issues/19)) ([f834084](https://github.com/dever-labs/devx/commit/f834084dd1ed3583758935c8277c8555c995ce51))
+
 ## [0.1.2](https://github.com/dever-labs/devx/compare/v0.1.1...v0.1.2) (2026-10-29)
 
 
