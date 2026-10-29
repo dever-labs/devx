@@ -482,4 +482,3 @@ func TestRunSteps_EmptyList(t *testing.T) {
 		t.Fatal("expected empty results for empty step list")
 	}
 }
-

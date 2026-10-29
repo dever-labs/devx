@@ -163,6 +163,49 @@ setup:
 OS, then runs `setup:` steps in order. A `runOnce: true` step is skipped on a later
 `devx setup` if its `run:` command's content hasn't changed since the last successful run.
 
+`devx init` auto-detects a JS/TS package manager and workspace layout from an existing
+`package.json` (`packageManager` field, lockfile, or `workspaces`/`pnpm-workspace.yaml`) and
+writes a single root-level `setup:` install step for the detected manager (`npm install`,
+`yarn install`, or `pnpm install`) — this covers the common "install once at the workspace
+root" pattern for yarn/npm/pnpm monorepos without per-package `run:`/`cwd:` boilerplate.
+
+For the `node` stack, `devx init` also auto-detects a pinned tool version so `devx.yaml`
+doesn't duplicate (and risk drifting from) the real source of truth:
+
+- **Node version**, from `.nvmrc`, `.node-version`, or `package.json`'s `engines.node` field
+  (checked in that priority order), generates a `tools:` entry pinning `node`'s `version:`.
+- **Package manager version**, from `package.json`'s Corepack `packageManager` field (e.g.
+  `"yarn@4.1.0"`), generates a second `tools:` entry when Corepack is installed locally.
+
+When a Node version manager (`volta`, `fnm`, or `nvm`) is already installed, the generated
+`install:` commands activate the pinned version through it (`volta install node@20.11.0`,
+`fnm install 20.11.0`, ...) instead of mutating the global toolchain via `brew`/`apt`/`choco`
+— the same way Corepack (`corepack prepare yarn@4.1.0 --activate`) is preferred for the
+package manager over installing it globally. With no version manager installed, generated
+commands fall back to the OS package manager, same as a hand-written `tools:` entry.
+
+---
+
+## Debugging a process task
+
+`devx up` doesn't swallow a task's stdout/stderr — a detached task's output always lands in
+`.devx/logs/<task>.log`, readable live via `devx logs <task> -f`, and setting
+`interactive: true` on a task attaches your terminal's stdin/stdout/stderr directly. Either
+way, a debugger inspector port (e.g. Node's `--inspect`) is a plain TCP listener independent
+of stdio, so wrapping a task in devx doesn't block attaching to it.
+
+`devx init` can optionally scaffold a `.vscode/launch.json` with an **attach** configuration
+so pressing F5 connects to a devx-managed process:
+
+- **node**: add `--inspect` (or `--inspect-brk`) to the task's `run:` command; the generated
+  config attaches on port `9229`.
+- **go**: wrap the task's `run:` command with
+  `dlv exec --headless --listen=:2345 --api-version=2 -- <your binary>`; the generated
+  config attaches to Delve on port `2345`.
+
+Other stacks (.NET, Python) aren't templated yet — `devx init` reports this and skips the
+file rather than guessing a wrong debug-adapter shape.
+
 ---
 
 ## Scaffolding local config/secrets
@@ -212,6 +255,7 @@ from your existing secrets manager (1Password CLI, Vault, etc.) rather than prom
 ---
 
 ## CLI commands
+
 
 | Command | Description |
 |---|---|
