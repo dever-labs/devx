@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # node24
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # node24
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # node24
         with:
           # Pinned to a specific minor (not go-version-file: go.mod, which
           # would resolve to go.mod's conservative `go 1.21` floor): recent
@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # node24
       - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # node24
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # node24
         with:
           go-version: "1.26"
           check-latest: true
