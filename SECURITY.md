@@ -27,5 +27,4 @@ We will acknowledge receipt within **48 hours** and aim to release a fix within 
 
 This policy covers the `devx` binary and the packages under `internal/`. It does not cover:
 
-- Third-party images started by devx (those are the user's responsibility)
-- The telemetry stack containers (Grafana, Prometheus, etc.) — report those upstream
+- Third-party images/processes started by devx (those are the user's responsibility)
