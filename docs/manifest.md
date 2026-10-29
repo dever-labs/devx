@@ -185,7 +185,30 @@ commands fall back to the OS package manager, same as a hand-written `tools:` en
 
 ---
 
+## Debugging a process task
+
+`devx up` doesn't swallow a task's stdout/stderr — a detached task's output always lands in
+`.devx/logs/<task>.log`, readable live via `devx logs <task> -f`, and setting
+`interactive: true` on a task attaches your terminal's stdin/stdout/stderr directly. Either
+way, a debugger inspector port (e.g. Node's `--inspect`) is a plain TCP listener independent
+of stdio, so wrapping a task in devx doesn't block attaching to it.
+
+`devx init` can optionally scaffold a `.vscode/launch.json` with an **attach** configuration
+so pressing F5 connects to a devx-managed process:
+
+- **node**: add `--inspect` (or `--inspect-brk`) to the task's `run:` command; the generated
+  config attaches on port `9229`.
+- **go**: wrap the task's `run:` command with
+  `dlv exec --headless --listen=:2345 --api-version=2 -- <your binary>`; the generated
+  config attaches to Delve on port `2345`.
+
+Other stacks (.NET, Python) aren't templated yet — `devx init` reports this and skips the
+file rather than guessing a wrong debug-adapter shape.
+
+---
+
 ## CLI commands
+
 
 | Command | Description |
 |---|---|
