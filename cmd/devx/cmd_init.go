@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/dever-labs/devx/internal/detect"
 )
 
 func runInit(args []string) error {
@@ -107,15 +109,36 @@ func writeInitManifest(projectName, stack string, withAI bool) error {
 		sb.WriteString("ai:\n  provider: local\n  local:\n    backend: auto\n")
 	}
 
+	var mgr string
+	if stack == "node" {
+		mgr = "npm"
+		if ws, ok := detect.JS("."); ok {
+			mgr = ws.Manager
+			note := "single package"
+			if ws.IsWorkspace {
+				note = "workspace root"
+			}
+			fmt.Fprintf(&sb, "\n# Detected %s (%s) from package.json — installs once at the\n# workspace root instead of per-package setup: steps.\n", mgr, note)
+			fmt.Fprintf(&sb, "setup:\n  - name: install dependencies\n    run: %s\n    runOnce: true\n", ws.InstallCommand())
+		}
+	}
+
 	sb.WriteString("\n# Tasks runnable with: devx run <name> (or devx <name>)\n")
 	switch stack {
 	case "dotnet":
 		sb.WriteString("build:\n  desc: Build the solution\n  run: dotnet build\n\n")
 		sb.WriteString("test:\n  desc: Run all tests\n  run: dotnet test --logger \"console;verbosity=minimal\"\n")
 	case "node":
-		sb.WriteString("build:\n  desc: Build\n  run: npm run build\n\n")
-		sb.WriteString("test:\n  desc: Run tests\n  run: npm test\n\n")
-		sb.WriteString("dev:\n  desc: Start dev server\n  run: npm run dev\n")
+		runPrefix := mgr + " run" // "npm run <script>" / "pnpm run <script>"
+		if mgr == "yarn" {
+			runPrefix = "yarn" // yarn doesn't need the "run" subcommand for package.json scripts
+		}
+		// "test"/"start" are reserved lifecycle script names every
+		// manager runs directly without "run" (npm test, pnpm test,
+		// yarn test all work identically).
+		fmt.Fprintf(&sb, "build:\n  desc: Build\n  run: %s build\n\n", runPrefix)
+		fmt.Fprintf(&sb, "test:\n  desc: Run tests\n  run: %s test\n\n", mgr)
+		fmt.Fprintf(&sb, "dev:\n  desc: Start dev server\n  run: %s dev\n", runPrefix)
 	case "go":
 		sb.WriteString("build:\n  desc: Build all packages\n  run: go build ./...\n\n")
 		sb.WriteString("test:\n  desc: Run all tests\n  run: go test ./...\n")
