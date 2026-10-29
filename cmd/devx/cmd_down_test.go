@@ -80,7 +80,7 @@ func TestStopTimeoutFor(t *testing.T) {
 		want time.Duration
 	}{
 		{"api", 10 * time.Second, 5 * time.Second},
-		{"worker", 10 * time.Second, 10 * time.Second}, // unparsable -> fallback
+		{"worker", 10 * time.Second, 10 * time.Second},  // unparsable -> fallback
 		{"nottout", 10 * time.Second, 10 * time.Second}, // unset -> fallback
 		{"missing", 10 * time.Second, 10 * time.Second}, // task gone -> fallback
 	}

@@ -28,4 +28,3 @@ func runDoctor(ctx context.Context, args []string) error {
 	}
 	return nil
 }
-

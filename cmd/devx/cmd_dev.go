@@ -238,13 +238,13 @@ func runDevExec(args []string) error {
 // ── devcontainer.json parsing ─────────────────────────────────────────────────
 
 type devcontainerJSON struct {
-	Name         string                     `json:"name"`
-	Image        string                     `json:"image"`
-	Build        *devcontainerBuildSpec     `json:"build"`
-	Features     map[string]interface{}     `json:"features"`
-	ForwardPorts []interface{}              `json:"forwardPorts"`
-	Mounts       []interface{}              `json:"mounts"`
-	RemoteEnv    map[string]string          `json:"remoteEnv"`
+	Name         string                 `json:"name"`
+	Image        string                 `json:"image"`
+	Build        *devcontainerBuildSpec `json:"build"`
+	Features     map[string]interface{} `json:"features"`
+	ForwardPorts []interface{}          `json:"forwardPorts"`
+	Mounts       []interface{}          `json:"mounts"`
+	RemoteEnv    map[string]string      `json:"remoteEnv"`
 
 	PostCreateCommand interface{} `json:"postCreateCommand"`
 	PostStartCommand  interface{} `json:"postStartCommand"`

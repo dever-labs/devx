@@ -105,4 +105,3 @@ func containsSubstring(items []string, substr string) bool {
 	}
 	return false
 }
-
