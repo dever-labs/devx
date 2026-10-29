@@ -39,7 +39,7 @@ func WriteContinueConfig(cfg *SavedAIConfig) error {
 }
 
 type continueConfig struct {
-	Models              []continueModel  `json:"models"`
+	Models               []continueModel `json:"models"`
 	TabAutocompleteModel *continueModel  `json:"tabAutocompleteModel,omitempty"`
 }
 
