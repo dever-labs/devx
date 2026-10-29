@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -15,12 +16,59 @@ import (
 	"github.com/dever-labs/devx/internal/config"
 )
 
+func TestShellFor_ExplicitOverrides(t *testing.T) {
+	cases := []struct {
+		override, wantShell, wantFlag string
+	}{
+		{"sh", "sh", "-c"},
+		{"bash", "bash", "-c"},
+		{"cmd", "cmd", "/C"},
+		{"powershell", "powershell", "-Command"},
+		{"pwsh", "pwsh", "-Command"},
+		{"zsh", "zsh", "-c"}, // default fallthrough for any other custom shell
+	}
+	for _, c := range cases {
+		shell, flag := shellFor(c.override)
+		if shell != c.wantShell || flag != c.wantFlag {
+			t.Errorf("shellFor(%q) = (%q, %q), want (%q, %q)", c.override, shell, flag, c.wantShell, c.wantFlag)
+		}
+	}
+}
+
+func TestShellFor_DefaultMatchesDocumentedGOOSBehavior(t *testing.T) {
+	// docs/manifest.md documents sh -c on Linux/macOS, cmd /C on Windows
+	// for the default (unset) shell -- see internal/task/driver.go.
+	shell, flag := shellFor("")
+	if runtime.GOOS == "windows" {
+		if shell != "cmd" || flag != "/C" {
+			t.Errorf("shellFor(\"\") on windows = (%q, %q), want (\"cmd\", \"/C\")", shell, flag)
+		}
+	} else {
+		if shell != "sh" || flag != "-c" {
+			t.Errorf("shellFor(\"\") on %s = (%q, %q), want (\"sh\", \"-c\")", runtime.GOOS, shell, flag)
+		}
+	}
+}
+
 func newEffectiveTask(name, run, dir string) *EffectiveTask {
 	et := &EffectiveTask{}
 	et.Name = name
 	et.ResolvedRun = run
 	et.ResolvedDir = dir
 	et.ResolvedEnv = map[string]string{}
+	return et
+}
+
+// newSleepTask is like newEffectiveTask but forces shell: sh, since "sleep"
+// (unlike "echo"/"exit", which shellFor's platform-appropriate default
+// shell handles natively everywhere) is a POSIX coreutils command with
+// no cmd.exe equivalent — these tests need a real POSIX shell
+// regardless of GOOS, which on Windows means requiring Git Bash (as
+// devx's own docs note "sh" is settable via shell: for exactly this).
+func newSleepTask(t *testing.T, name, run, dir string) *EffectiveTask {
+	t.Helper()
+	et := newEffectiveTask(name, run, dir)
+	et.Shell = "sh"
 	return et
 }
 
@@ -32,13 +80,17 @@ func TestProcessDriver_StartWaitExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := h.Wait(context.Background()); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	waitErr := h.Wait(context.Background())
 
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log: %v", err)
+	data, readErr := os.ReadFile(logPath)
+	if waitErr != nil {
+		if readErr == nil {
+			t.Fatalf("Wait: %v (captured output: %q)", waitErr, data)
+		}
+		t.Fatalf("Wait: %v (also failed to read log: %v)", waitErr, readErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read log: %v", readErr)
 	}
 	if !strings.Contains(string(data), "hello-from-task") {
 		t.Errorf("expected log to contain task output, got %q", data)
@@ -49,7 +101,7 @@ func TestProcessDriver_StatusTransitions(t *testing.T) {
 	d := NewProcessDriver()
 	logPath := filepath.Join(t.TempDir(), "task.log")
 
-	h, err := d.Start(context.Background(), newEffectiveTask("t", "sleep 0.3", "."), logPath)
+	h, err := d.Start(context.Background(), newSleepTask(t, "t", "sleep 0.3", "."), logPath)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -98,7 +150,7 @@ func TestProcessDriver_StopTerminatesProcess(t *testing.T) {
 	d := NewProcessDriver()
 	logPath := filepath.Join(t.TempDir(), "task.log")
 
-	h, err := d.Start(context.Background(), newEffectiveTask("t", "sleep 300", "."), logPath)
+	h, err := d.Start(context.Background(), newSleepTask(t, "t", "sleep 300", "."), logPath)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -195,11 +247,13 @@ func TestTailFile_NoFollow_ReturnsPlainFile(t *testing.T) {
 }
 
 func TestCheckReady_Cmd(t *testing.T) {
-	if err := CheckReady(context.Background(), &config.ReadyCheck{Cmd: "true"}, "."); err != nil {
-		t.Errorf("expected 'true' command to succeed, got %v", err)
+	// "exit 0"/"exit 1" (rather than the POSIX-only "true"/"false") work
+	// identically under both shellFor defaults (sh -c, cmd /C).
+	if err := CheckReady(context.Background(), &config.ReadyCheck{Cmd: "exit 0"}, "."); err != nil {
+		t.Errorf("expected a zero-exit command to succeed, got %v", err)
 	}
-	if err := CheckReady(context.Background(), &config.ReadyCheck{Cmd: "false"}, "."); err == nil {
-		t.Error("expected 'false' command to fail readiness")
+	if err := CheckReady(context.Background(), &config.ReadyCheck{Cmd: "exit 1"}, "."); err == nil {
+		t.Error("expected a non-zero-exit command to fail readiness")
 	}
 }
 

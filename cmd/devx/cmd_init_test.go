@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dever-labs/devx/internal/testexec"
 	"gopkg.in/yaml.v3"
 )
 
@@ -186,11 +187,14 @@ func TestWriteInitManifest_NvmrcWithoutManagerFallsBackToOSPackageManager(t *tes
 
 func TestWriteInitManifest_NodeVersionFileUsesVersionManagerWhenPresent(t *testing.T) {
 	// Put a fake "fnm" binary on PATH so NodeVersionManager() finds it.
+	// NodeVersionManager only calls exec.LookPath (never executes the
+	// binary), but LookPath still requires a real, correctly-named
+	// executable file -- a bare "#!/bin/sh" script has no shebang
+	// dispatch on Windows and, lacking a PATHEXT-registered extension,
+	// wouldn't even be found there. testexec.NewFakeBinNamed produces a
+	// binary that's valid (and found) on every platform.
 	binDir := t.TempDir()
-	writeInitTestFile(t, binDir, "fnm", "#!/bin/sh\n")
-	if err := os.Chmod(filepath.Join(binDir, "fnm"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testexec.NewFakeBinNamed(t, binDir, "fnm")
 	t.Setenv("PATH", binDir)
 
 	dir := chdirTemp(t)

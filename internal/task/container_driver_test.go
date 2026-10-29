@@ -5,24 +5,51 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dever-labs/devx/internal/testexec"
 )
 
-// fakeRuntimeBin writes an executable named "docker" or "podman" into a
-// fresh temp dir containing the given shell script body, returning that
-// dir. Prepending it to PATH lets containerHandle's exec.CommandContext
-// calls (which always invoke the literal "docker"/"podman" binary name)
-// be intercepted deterministically, without needing the real CLI.
-func fakeRuntimeBin(t *testing.T, name, body string) string {
+// fakeBinOpt configures the behavior of a fakeRuntimeBin instance; see
+// withExitCode, withStdout, and withArgsFile.
+type fakeBinOpt func(t *testing.T)
+
+// withExitCode makes the fake runtime binary exit with the given code
+// instead of the default 0.
+func withExitCode(code int) fakeBinOpt {
+	return func(t *testing.T) { t.Setenv("FAKE_EXIT_CODE", strconv.Itoa(code)) }
+}
+
+// withStdout makes the fake runtime binary print s (plus a trailing
+// newline) to stdout.
+func withStdout(s string) fakeBinOpt {
+	return func(t *testing.T) { t.Setenv("FAKE_STDOUT", s) }
+}
+
+// withArgsFile makes the fake runtime binary record every argument it
+// receives (one per line) to path.
+func withArgsFile(path string) fakeBinOpt {
+	return func(t *testing.T) { t.Setenv("FAKE_ARGS_FILE", path) }
+}
+
+// fakeRuntimeBin writes a cross-platform fake binary (see
+// internal/testexec) named "docker" or "podman" into a fresh temp dir,
+// returning that dir. Prepending it to PATH lets containerHandle's
+// exec.CommandContext calls (which always invoke the literal
+// "docker"/"podman" binary name) be intercepted deterministically,
+// without needing the real CLI. opts configure the fake binary's
+// behavior via the FAKE_* environment variables documented in
+// internal/testexec.
+func fakeRuntimeBin(t *testing.T, name string, opts ...fakeBinOpt) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, name)
-	script := "#!/bin/sh\n" + body
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
+	for _, opt := range opts {
+		opt(t)
 	}
+	testexec.NewFakeBinNamed(t, dir, name)
 	return dir
 }
 
@@ -32,7 +59,7 @@ func withFakePath(t *testing.T, dirs ...string) {
 }
 
 func TestContainerDriver_Start_Success(t *testing.T) {
-	dir := fakeRuntimeBin(t, "docker", "exit 0\n")
+	dir := fakeRuntimeBin(t, "docker")
 	withFakePath(t, dir)
 
 	d := NewContainerDriver()
@@ -53,7 +80,7 @@ func TestContainerDriver_Start_Success(t *testing.T) {
 }
 
 func TestContainerDriver_Start_DetectsPodmanRuntime(t *testing.T) {
-	dir := fakeRuntimeBin(t, "podman", "exit 0\n")
+	dir := fakeRuntimeBin(t, "podman")
 	withFakePath(t, dir)
 
 	d := NewContainerDriver()
@@ -93,7 +120,7 @@ func TestContainerDriver_Start_CommandFailureErrors(t *testing.T) {
 }
 
 func TestContainerHandle_Status_Running(t *testing.T) {
-	dir := fakeRuntimeBin(t, "docker", "echo running\n")
+	dir := fakeRuntimeBin(t, "docker", withStdout("running"))
 	withFakePath(t, dir)
 
 	h := &containerHandle{name: "foo", runtime: "docker"}
@@ -107,7 +134,7 @@ func TestContainerHandle_Status_Running(t *testing.T) {
 }
 
 func TestContainerHandle_Status_OtherState(t *testing.T) {
-	dir := fakeRuntimeBin(t, "docker", "echo exited\n")
+	dir := fakeRuntimeBin(t, "docker", withStdout("exited"))
 	withFakePath(t, dir)
 
 	h := &containerHandle{name: "foo", runtime: "docker"}
@@ -121,7 +148,7 @@ func TestContainerHandle_Status_OtherState(t *testing.T) {
 }
 
 func TestContainerHandle_Status_CommandFailureReturnsExited(t *testing.T) {
-	dir := fakeRuntimeBin(t, "docker", "exit 1\n")
+	dir := fakeRuntimeBin(t, "docker", withExitCode(1))
 	withFakePath(t, dir)
 
 	h := &containerHandle{name: "foo", runtime: "docker"}
@@ -136,9 +163,7 @@ func TestContainerHandle_Status_CommandFailureReturnsExited(t *testing.T) {
 
 func TestContainerHandle_Stop_PassesTimeoutSeconds(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
-	dir := fakeRuntimeBin(t, "docker", `printf '%s\n' "$@" > "`+argsFile+`"
-exit 0
-`)
+	dir := fakeRuntimeBin(t, "docker", withArgsFile(argsFile))
 	withFakePath(t, dir)
 
 	h := &containerHandle{name: "foo", runtime: "docker"}
@@ -158,9 +183,7 @@ exit 0
 
 func TestContainerHandle_Logs_Follow(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
-	dir := fakeRuntimeBin(t, "docker", `printf '%s\n' "$@" > "`+argsFile+`"
-echo container-log-line
-`)
+	dir := fakeRuntimeBin(t, "docker", withArgsFile(argsFile), withStdout("container-log-line"))
 	withFakePath(t, dir)
 
 	h := &containerHandle{name: "foo", runtime: "docker"}
@@ -189,8 +212,7 @@ echo container-log-line
 
 func TestContainerHandle_Logs_NoFollow(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
-	dir := fakeRuntimeBin(t, "docker", `printf '%s\n' "$@" > "`+argsFile+`"
-`)
+	dir := fakeRuntimeBin(t, "docker", withArgsFile(argsFile))
 	withFakePath(t, dir)
 
 	h := &containerHandle{name: "foo", runtime: "docker"}
@@ -212,9 +234,7 @@ func TestContainerHandle_Logs_NoFollow(t *testing.T) {
 
 func TestContainerHandle_Exec_PassesArgs(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
-	dir := fakeRuntimeBin(t, "docker", `printf '%s\n' "$@" > "`+argsFile+`"
-exit 0
-`)
+	dir := fakeRuntimeBin(t, "docker", withArgsFile(argsFile))
 	withFakePath(t, dir)
 
 	h := &containerHandle{name: "foo", runtime: "docker"}

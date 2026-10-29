@@ -22,13 +22,27 @@ func writeManifest(t *testing.T, dir, yaml string) string {
 func TestScheduler_RunOneShotChain(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker.txt")
+	// Interpolated unquoted into an `sh -c` command string below: on
+	// Windows, the default shell is Git Bash's sh.exe, which treats
+	// backslash as an escape character outside quotes, so a native
+	// filepath.Join path (using "\") gets mangled. Forward slashes are
+	// understood by both sh and the Win32 file APIs devx calls directly
+	// (os.ReadFile below), so use those for the shell-visible path.
+	markerSh := filepath.ToSlash(marker)
+	// shell: sh is explicit here (rather than relying on the
+	// platform-default shell) because the assertion below expects exact
+	// LF-separated content; cmd.exe's "echo" emits CRLF, which would
+	// fail that comparison even though the chain itself still ran fine.
 	path := writeManifest(t, dir, `version: 1
 project:
   name: test
-first: echo first >> `+marker+`
+first:
+  run: echo first >> `+markerSh+`
+  shell: sh
 second:
   deps: [first]
-  run: echo second >> `+marker+`
+  run: echo second >> `+markerSh+`
+  shell: sh
 `)
 	m, err := config.Load(path)
 	if err != nil {
@@ -55,10 +69,11 @@ second:
 func TestScheduler_DryRunExecutesNothing(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker.txt")
+	markerSh := filepath.ToSlash(marker)
 	path := writeManifest(t, dir, `version: 1
 project:
   name: test
-first: touch `+marker+`
+first: touch `+markerSh+`
 `)
 	m, err := config.Load(path)
 	if err != nil {
@@ -83,8 +98,9 @@ project:
   name: test
 web:
   run: sleep 2
+  shell: sh
   ready:
-    cmd: "true"
+    cmd: "exit 0"
   detached: true
 `)
 	m, err := config.Load(path)
@@ -103,5 +119,20 @@ web:
 	}
 	if _, ok := sched.State.Lookup("web"); !ok {
 		t.Fatalf("expected state entry for 'web' after up")
+	}
+
+	// web is detached, so its process (and the goroutine that eventually
+	// closes its log file) outlives Up() by design — exactly like a real
+	// `devx up` invocation, which exits while the task keeps running.
+	// Left alone, that means the log file handle may still be open when
+	// t.TempDir() tries to remove dir's contents during cleanup, which
+	// Windows (unlike POSIX) refuses to do. Stop() blocks until the
+	// process has exited and (per driver.go's close-before-signal
+	// ordering) its log file has been closed, so do that before the test
+	// ends. See issue #39.
+	if h, ok := sched.handles["web"]; ok {
+		t.Cleanup(func() {
+			_ = h.Stop(context.Background(), 5*time.Second)
+		})
 	}
 }

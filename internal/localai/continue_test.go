@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+// setHomeDir points os.UserHomeDir at home for the duration of t. HOME is
+// honored on Unix/macOS, but os.UserHomeDir reads %USERPROFILE% on
+// Windows instead — setting only HOME leaves WriteContinueConfig writing
+// to the real user profile dir on Windows, which this test then can't
+// find (see issue #39). Setting both covers every platform devx targets.
+func setHomeDir(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func TestBuildContinueConfig_LocalOllamaDefaultModel(t *testing.T) {
 	cfg := &SavedAIConfig{Provider: "local", Backend: BackendOllama}
 	out, err := buildContinueConfig(cfg)
@@ -105,7 +116,7 @@ func TestBuildContinueConfig_UnsupportedProviderErrors(t *testing.T) {
 
 func TestWriteContinueConfig_WritesValidJSON(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHomeDir(t, home)
 
 	cfg := &SavedAIConfig{Provider: "openai", Model: "gpt-4o"}
 	if err := WriteContinueConfig(cfg); err != nil {
@@ -128,7 +139,7 @@ func TestWriteContinueConfig_WritesValidJSON(t *testing.T) {
 
 func TestWriteContinueConfig_UnsupportedProviderErrors(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHomeDir(t, home)
 
 	if err := WriteContinueConfig(&SavedAIConfig{Provider: "copilot"}); err == nil {
 		t.Fatal("expected an error for an unsupported provider")

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -95,15 +96,30 @@ func (d *processDriver) Start(ctx context.Context, et *EffectiveTask, logPath st
 	h := &processHandle{cmd: cmd, logFile: logFile, logPath: logPath, exited: make(chan struct{})}
 	go func() {
 		h.exitErr = cmd.Wait()
-		close(h.exited)
+		// Close the log file before signaling exited, so that any Wait
+		// or Stop caller that observes process exit can also rely on the
+		// log file handle having been released (e.g. so a subsequent
+		// os.Remove/RemoveAll of the log's directory doesn't race with
+		// this goroutine on platforms like Windows that forbid deleting
+		// open files).
 		logFile.Close()
+		close(h.exited)
 	}()
 	return h, nil
 }
 
 func shellFor(override string) (string, string) {
 	switch override {
-	case "", "sh":
+	case "":
+		// Match docs/manifest.md's documented default: sh -c on
+		// Linux/macOS, cmd /C on Windows (where a POSIX "sh" isn't
+		// guaranteed to be on PATH at all, and isn't reliable even when
+		// it is -- see issue #39).
+		if runtime.GOOS == "windows" {
+			return "cmd", "/C"
+		}
+		return "sh", "-c"
+	case "sh":
 		return "sh", "-c"
 	case "bash":
 		return "bash", "-c"
