@@ -29,13 +29,20 @@ func TestScheduler_RunOneShotChain(t *testing.T) {
 	// understood by both sh and the Win32 file APIs devx calls directly
 	// (os.ReadFile below), so use those for the shell-visible path.
 	markerSh := filepath.ToSlash(marker)
+	// shell: sh is explicit here (rather than relying on the
+	// platform-default shell) because the assertion below expects exact
+	// LF-separated content; cmd.exe's "echo" emits CRLF, which would
+	// fail that comparison even though the chain itself still ran fine.
 	path := writeManifest(t, dir, `version: 1
 project:
   name: test
-first: echo first >> `+markerSh+`
+first:
+  run: echo first >> `+markerSh+`
+  shell: sh
 second:
   deps: [first]
   run: echo second >> `+markerSh+`
+  shell: sh
 `)
 	m, err := config.Load(path)
 	if err != nil {
@@ -91,8 +98,9 @@ project:
   name: test
 web:
   run: sleep 2
+  shell: sh
   ready:
-    cmd: "true"
+    cmd: "exit 0"
   detached: true
 `)
 	m, err := config.Load(path)

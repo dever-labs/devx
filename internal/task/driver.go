@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -103,7 +104,16 @@ func (d *processDriver) Start(ctx context.Context, et *EffectiveTask, logPath st
 
 func shellFor(override string) (string, string) {
 	switch override {
-	case "", "sh":
+	case "":
+		// Match docs/manifest.md's documented default: sh -c on
+		// Linux/macOS, cmd /C on Windows (where a POSIX "sh" isn't
+		// guaranteed to be on PATH at all, and isn't reliable even when
+		// it is -- see issue #39).
+		if runtime.GOOS == "windows" {
+			return "cmd", "/C"
+		}
+		return "sh", "-c"
+	case "sh":
 		return "sh", "-c"
 	case "bash":
 		return "bash", "-c"
