@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/dever-labs/devx/internal/config"
@@ -319,7 +318,7 @@ func (s *Scheduler) probeExisting(ctx context.Context, et *EffectiveTask, existi
 // processAlive reports whether pid refers to a live process, using
 // signal 0 (no-op) which only checks existence/permission.
 func processAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+	return processAliveOS(pid)
 }
 
 func (s *Scheduler) emit(name, msg string) {

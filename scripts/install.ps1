@@ -1,13 +1,13 @@
 # Install devx for Windows
-# Usage: iwr https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.ps1 | iex
-#    or: iwr https://raw.githubusercontent.com/dever-labs/dever/main/scripts/install.ps1 -OutFile install.ps1; .\install.ps1 -Version v1.0.0
+# Usage: iwr https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.ps1 | iex
+#    or: iwr https://raw.githubusercontent.com/dever-labs/devx/main/scripts/install.ps1 -OutFile install.ps1; .\install.ps1 -Version v1.0.0
 param(
     [string]$Version,
     [string]$InstallDir = "$env:LOCALAPPDATA\devx"
 )
 
 $ErrorActionPreference = "Stop"
-$Repo = "dever-labs/dever"
+$Repo = "dever-labs/devx"
 
 function Get-LatestVersion {
     $release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"

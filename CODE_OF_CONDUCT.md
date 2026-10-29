@@ -34,7 +34,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported by opening a [GitHub issue](https://github.com/dever-labs/dever/issues) or contacting the maintainers directly. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported by opening a [GitHub issue](https://github.com/dever-labs/devx/issues) or contacting the maintainers directly. All complaints will be reviewed and investigated promptly and fairly.
 
 ## Attribution
 

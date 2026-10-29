@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os/exec"
-	"syscall"
 	"time"
 
 	"github.com/dever-labs/devx/internal/config"
@@ -128,21 +127,19 @@ func stopEntry(ctx context.Context, entry task.StateEntry, timeout time.Duration
 // stopProcessGroup signals the process group devx started the task in
 // (see processDriver's Setpgid: true) — SIGTERM first, then SIGKILL if
 // it hasn't exited by timeout. Each signal is a best-effort no-op if the
-// group has already exited (ESRCH).
+// group has already exited. See cmd_down_unix.go / cmd_down_windows.go for
+// the platform-specific signal/process-tree primitives.
 func stopProcessGroup(pid int, timeout time.Duration) error {
-	pgid := -pid
-	if err := syscall.Kill(pgid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
-		return err
-	}
+	stopProcessGroupOS(pid)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if syscall.Kill(pid, 0) != nil {
+		if !processAliveOS(pid) {
 			return nil // process is gone
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if syscall.Kill(pid, 0) == nil {
-		_ = syscall.Kill(pgid, syscall.SIGKILL)
+	if processAliveOS(pid) {
+		killProcessGroupOS(pid)
 	}
 	return nil
 }
