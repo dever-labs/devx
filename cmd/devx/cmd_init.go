@@ -112,8 +112,41 @@ func writeInitManifest(projectName, stack string, withAI bool) error {
 	var mgr string
 	if stack == "node" {
 		mgr = "npm"
-		if ws, ok := detect.JS("."); ok {
+		var toolLines []string
+
+		if v, ok := detect.NodeVersion("."); ok {
+			var winCmd, macCmd, linCmd string
+			if m, ok := detect.NodeVersionManager(); ok {
+				cmd := detect.NodeInstallCommand(m, v)
+				winCmd, macCmd, linCmd = cmd, cmd, cmd
+				fmt.Fprintf(&sb, "\n# Detected node %s from the project and %s installed locally —\n# installs pin to this version through %s instead of the OS package manager.\n", v, m, m)
+			} else {
+				winCmd = "choco install nodejs --version=" + v
+				macCmd = "brew install node@" + v
+				linCmd = "sudo apt-get install -y nodejs=" + v + "*"
+				fmt.Fprintf(&sb, "\n# Detected node %s from the project. No nvm/fnm/volta found locally,\n# so install falls back to the OS package manager — install one of\n# those tools for version-manager-aware installs instead.\n", v)
+			}
+			toolLines = append(toolLines, fmt.Sprintf("  - name: node\n    version: %s\n    check: node --version\n    install:\n      windows: %s\n      macos: %s\n      linux: %s\n", v, winCmd, macCmd, linCmd))
+		}
+
+		ws, wsOK := detect.JS(".")
+		if wsOK {
 			mgr = ws.Manager
+			if ws.ManagerVersion != "" {
+				if cmd, ok := detect.CorepackInstallCommand(ws.ManagerVersion); ok {
+					toolLines = append(toolLines, fmt.Sprintf("  - name: %s\n    version: %s\n    check: %s --version\n    install:\n      windows: %s\n      macos: %s\n      linux: %s\n", mgr, ws.ManagerVersion, mgr, cmd, cmd, cmd))
+				}
+			}
+		}
+
+		if len(toolLines) > 0 {
+			sb.WriteString("tools:\n")
+			for _, l := range toolLines {
+				sb.WriteString(l)
+			}
+		}
+
+		if wsOK {
 			note := "single package"
 			if ws.IsWorkspace {
 				note = "workspace root"

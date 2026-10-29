@@ -168,6 +168,21 @@ writes a single root-level `setup:` install step for the detected manager (`npm 
 `yarn install`, or `pnpm install`) — this covers the common "install once at the workspace
 root" pattern for yarn/npm/pnpm monorepos without per-package `run:`/`cwd:` boilerplate.
 
+For the `node` stack, `devx init` also auto-detects a pinned tool version so `devx.yaml`
+doesn't duplicate (and risk drifting from) the real source of truth:
+
+- **Node version**, from `.nvmrc`, `.node-version`, or `package.json`'s `engines.node` field
+  (checked in that priority order), generates a `tools:` entry pinning `node`'s `version:`.
+- **Package manager version**, from `package.json`'s Corepack `packageManager` field (e.g.
+  `"yarn@4.1.0"`), generates a second `tools:` entry when Corepack is installed locally.
+
+When a Node version manager (`volta`, `fnm`, or `nvm`) is already installed, the generated
+`install:` commands activate the pinned version through it (`volta install node@20.11.0`,
+`fnm install 20.11.0`, ...) instead of mutating the global toolchain via `brew`/`apt`/`choco`
+— the same way Corepack (`corepack prepare yarn@4.1.0 --activate`) is preferred for the
+package manager over installing it globally. With no version manager installed, generated
+commands fall back to the OS package manager, same as a hand-written `tools:` entry.
+
 ---
 
 ## CLI commands

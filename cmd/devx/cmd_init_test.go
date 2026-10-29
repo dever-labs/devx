@@ -139,6 +139,91 @@ func TestWriteInitManifest_NodeWithoutPackageJSONHasNoSetupBlock(t *testing.T) {
 	}
 }
 
+func TestWriteInitManifest_NvmrcWithoutManagerFallsBackToOSPackageManager(t *testing.T) {
+	// No version manager and no corepack on PATH -> deterministic fallback.
+	// Also override HOME: hosted CI runners (e.g. GitHub Actions'
+	// ubuntu-latest image) ship nvm pre-installed under $HOME/.nvm, which
+	// would otherwise make NodeVersionManager() find it regardless of PATH.
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("NVM_DIR", "")
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir) // os.UserHomeDir() uses this on Windows
+
+	dir := chdirTemp(t)
+	writeInitTestFile(t, dir, ".nvmrc", "20.11.0")
+	writeInitTestFile(t, dir, "package.json", `{"name": "app"}`)
+
+	if err := writeInitManifest("my-app", "node", false); err != nil {
+		t.Fatalf("writeInitManifest failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Tools []struct {
+			Name    string `yaml:"name"`
+			Version string `yaml:"version"`
+			Install struct {
+				MacOS string `yaml:"macos"`
+			} `yaml:"install"`
+		} `yaml:"tools"`
+	}
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		t.Fatalf("produced invalid YAML: %v\n%s", err, data)
+	}
+	if len(out.Tools) != 1 || out.Tools[0].Name != "node" {
+		t.Fatalf("expected a single node tools entry, got %v\n%s", out.Tools, data)
+	}
+	if out.Tools[0].Version != "20.11.0" {
+		t.Errorf("tools[0].version = %q, want %q", out.Tools[0].Version, "20.11.0")
+	}
+	if out.Tools[0].Install.MacOS != "brew install node@20.11.0" {
+		t.Errorf("tools[0].install.macos = %q, want OS-package-manager fallback", out.Tools[0].Install.MacOS)
+	}
+}
+
+func TestWriteInitManifest_NodeVersionFileUsesVersionManagerWhenPresent(t *testing.T) {
+	// Put a fake "fnm" binary on PATH so NodeVersionManager() finds it.
+	binDir := t.TempDir()
+	writeInitTestFile(t, binDir, "fnm", "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(binDir, "fnm"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	dir := chdirTemp(t)
+	writeInitTestFile(t, dir, ".node-version", "22.11.0")
+
+	if err := writeInitManifest("my-app", "node", false); err != nil {
+		t.Fatalf("writeInitManifest failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "fnm install 22.11.0 && fnm use 22.11.0") {
+		t.Errorf("expected fnm-based install command, got:\n%s", data)
+	}
+}
+
+func TestWriteInitManifest_NoVersionPinHasNoToolsBlock(t *testing.T) {
+	dir := chdirTemp(t)
+	writeInitTestFile(t, dir, "package.json", `{"name": "app"}`)
+
+	if err := writeInitManifest("my-app", "node", false); err != nil {
+		t.Fatalf("writeInitManifest failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "tools:") {
+		t.Errorf("expected no tools: block without a detected version pin, got:\n%s", data)
+	}
+}
+
 func TestWriteDevcontainer_WritesValidJSONC(t *testing.T) {
 	dir := chdirTemp(t)
 	if err := writeDevcontainer("go"); err != nil {
