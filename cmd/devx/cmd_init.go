@@ -172,4 +172,3 @@ func writeDevcontainer(stack string) error {
 
 	return os.WriteFile(".devcontainer/devcontainer.json", []byte(content), 0644)
 }
-
