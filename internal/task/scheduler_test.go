@@ -22,13 +22,20 @@ func writeManifest(t *testing.T, dir, yaml string) string {
 func TestScheduler_RunOneShotChain(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker.txt")
+	// Interpolated unquoted into an `sh -c` command string below: on
+	// Windows, the default shell is Git Bash's sh.exe, which treats
+	// backslash as an escape character outside quotes, so a native
+	// filepath.Join path (using "\") gets mangled. Forward slashes are
+	// understood by both sh and the Win32 file APIs devx calls directly
+	// (os.ReadFile below), so use those for the shell-visible path.
+	markerSh := filepath.ToSlash(marker)
 	path := writeManifest(t, dir, `version: 1
 project:
   name: test
-first: echo first >> `+marker+`
+first: echo first >> `+markerSh+`
 second:
   deps: [first]
-  run: echo second >> `+marker+`
+  run: echo second >> `+markerSh+`
 `)
 	m, err := config.Load(path)
 	if err != nil {
@@ -55,10 +62,11 @@ second:
 func TestScheduler_DryRunExecutesNothing(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker.txt")
+	markerSh := filepath.ToSlash(marker)
 	path := writeManifest(t, dir, `version: 1
 project:
   name: test
-first: touch `+marker+`
+first: touch `+markerSh+`
 `)
 	m, err := config.Load(path)
 	if err != nil {
