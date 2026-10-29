@@ -96,8 +96,14 @@ func (d *processDriver) Start(ctx context.Context, et *EffectiveTask, logPath st
 	h := &processHandle{cmd: cmd, logFile: logFile, logPath: logPath, exited: make(chan struct{})}
 	go func() {
 		h.exitErr = cmd.Wait()
-		close(h.exited)
+		// Close the log file before signaling exited, so that any Wait
+		// or Stop caller that observes process exit can also rely on the
+		// log file handle having been released (e.g. so a subsequent
+		// os.Remove/RemoveAll of the log's directory doesn't race with
+		// this goroutine on platforms like Windows that forbid deleting
+		// open files).
 		logFile.Close()
+		close(h.exited)
 	}()
 	return h, nil
 }
