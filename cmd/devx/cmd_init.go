@@ -54,6 +54,13 @@ func runInit(args []string) error {
 	}
 	fmt.Println()
 
+	// VS Code attach-debugging config?
+	wantLaunchJSON, err := promptYN(reader, "Generate .vscode/launch.json for attach-based debugging?", stack == "node" || stack == "go")
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+
 	// AI setup?
 	wantAI, err := promptYN(reader, "Add AI configuration (devx ai)?", true)
 	if err != nil {
@@ -76,6 +83,19 @@ func runInit(args []string) error {
 		}
 	}
 
+	// Write .vscode/launch.json
+	if wantLaunchJSON {
+		ok, err := writeLaunchJSON(stack)
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "warning: could not write launch.json: %v\n", err)
+		case ok:
+			fmt.Println("✓  wrote .vscode/launch.json")
+		default:
+			fmt.Printf("ℹ  attach-debugging launch.json isn't templated for %q yet — skipped\n", stack)
+		}
+	}
+
 	if err := ensureDevxDir(); err != nil {
 		return err
 	}
@@ -91,8 +111,70 @@ func runInit(args []string) error {
 	if wantDevcontainer {
 		fmt.Println("Run  devx dev up  to start the devcontainer.")
 	}
+	if wantLaunchJSON {
+		switch stack {
+		case "node":
+			fmt.Println("Add --inspect (or --inspect-brk) to a task's run: command, start it with devx up, then press F5 to attach.")
+		case "go":
+			fmt.Println("Wrap a task's run: command with dlv exec --headless --listen=:2345 --api-version=2, start it with devx up, then press F5 to attach.")
+		}
+	}
 	fmt.Println("Run  devx doctor  to verify your environment.")
 	return nil
+}
+
+// writeLaunchJSON writes a stack-specific .vscode/launch.json attach
+// configuration for interactive debugging of a devx-managed process
+// task. Returns ok=false (no error) for stacks without a templated
+// debug adapter yet, so callers can report "skipped" rather than fail
+// init over an optional, best-effort convenience file.
+func writeLaunchJSON(stack string) (bool, error) {
+	var content string
+	switch stack {
+	case "node":
+		content = `{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "devx: attach (Node inspector)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
+`
+	case "go":
+		content = `{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "devx: attach (Delve)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "port": 2345,
+      "host": "127.0.0.1"
+    }
+  ]
+}
+`
+	default:
+		return false, nil
+	}
+
+	if err := os.MkdirAll(".vscode", 0755); err != nil {
+		return false, err
+	}
+	if fileExists(".vscode/launch.json") {
+		return false, nil // don't overwrite
+	}
+	if err := os.WriteFile(".vscode/launch.json", []byte(content), 0644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func writeInitManifest(projectName, stack string, withAI bool) error {

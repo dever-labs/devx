@@ -97,6 +97,76 @@ func TestWriteDevcontainer_DoesNotOverwriteExisting(t *testing.T) {
 	}
 }
 
+func TestWriteLaunchJSON_NodeAndGoProduceValidJSON(t *testing.T) {
+	for _, stack := range []string{"node", "go"} {
+		t.Run(stack, func(t *testing.T) {
+			dir := chdirTemp(t)
+			ok, err := writeLaunchJSON(stack)
+			if err != nil {
+				t.Fatalf("writeLaunchJSON(%q) failed: %v", stack, err)
+			}
+			if !ok {
+				t.Fatalf("writeLaunchJSON(%q) = false, want true", stack)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, ".vscode", "launch.json"))
+			if err != nil {
+				t.Fatalf("reading launch.json: %v", err)
+			}
+			var cfg struct {
+				Configurations []map[string]interface{} `json:"configurations"`
+			}
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				t.Fatalf("launch.json is not valid JSON: %v\n%s", err, data)
+			}
+			if len(cfg.Configurations) == 0 {
+				t.Error("expected at least one configuration")
+			}
+		})
+	}
+}
+
+func TestWriteLaunchJSON_UnsupportedStackIsNoopNotError(t *testing.T) {
+	chdirTemp(t)
+	for _, stack := range []string{"dotnet", "python", "other"} {
+		ok, err := writeLaunchJSON(stack)
+		if err != nil {
+			t.Fatalf("writeLaunchJSON(%q) returned an error, want nil: %v", stack, err)
+		}
+		if ok {
+			t.Errorf("writeLaunchJSON(%q) = true, want false (not templated)", stack)
+		}
+		if _, err := os.Stat(".vscode/launch.json"); err == nil {
+			t.Errorf("writeLaunchJSON(%q) should not have written a file", stack)
+		}
+	}
+}
+
+func TestWriteLaunchJSON_DoesNotOverwriteExisting(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".vscode"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".vscode", "launch.json")
+	sentinel := []byte(`{"configurations": []}`)
+	if err := os.WriteFile(path, sentinel, 0644); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := writeLaunchJSON("node")
+	if err != nil {
+		t.Fatalf("writeLaunchJSON failed: %v", err)
+	}
+	if ok {
+		t.Error("expected writeLaunchJSON to report false when launch.json already exists")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(sentinel) {
+		t.Errorf("expected writeLaunchJSON to leave an existing file untouched, got %s", got)
+	}
+}
+
 // withStdin temporarily replaces os.Stdin with a pipe fed by input, for
 // exercising interactive prompts (runInit) deterministically.
 func withStdin(t *testing.T, input string) {
@@ -128,7 +198,7 @@ func TestRunInit_DefaultsWriteManifestAndDevcontainer(t *testing.T) {
 	dir := chdirTemp(t)
 	// Blank lines everywhere: accept every default (project name, stack
 	// dotnet, devcontainer yes, AI yes).
-	withStdin(t, "\n\n\n\n")
+	withStdin(t, "\n\n\n\n\n")
 
 	var initErr error
 	_ = captureStdout(t, func() {
@@ -159,7 +229,7 @@ func TestRunInit_DefaultsWriteManifestAndDevcontainer(t *testing.T) {
 
 func TestRunInit_DeclineDevcontainerAndAI(t *testing.T) {
 	dir := chdirTemp(t)
-	withStdin(t, "myproj\ngo\nn\nn\n")
+	withStdin(t, "myproj\ngo\nn\nn\nn\n")
 
 	var initErr error
 	_ = captureStdout(t, func() {
@@ -183,5 +253,24 @@ func TestRunInit_DeclineDevcontainerAndAI(t *testing.T) {
 	dcPath := filepath.Join(dir, ".devcontainer", "devcontainer.json")
 	if _, err := os.Stat(dcPath); err == nil {
 		t.Error("expected no devcontainer.json to be written when declined")
+	}
+}
+
+func TestRunInit_AcceptsLaunchJSONForGoStack(t *testing.T) {
+	dir := chdirTemp(t)
+	// name, stack=3 (go), devcontainer=n, launchjson=y, ai=n
+	withStdin(t, "myproj\n3\nn\ny\nn\n")
+
+	var initErr error
+	_ = captureStdout(t, func() {
+		initErr = runInit(nil)
+	})
+	if initErr != nil {
+		t.Fatalf("runInit failed: %v", initErr)
+	}
+
+	ljPath := filepath.Join(dir, ".vscode", "launch.json")
+	if _, err := os.Stat(ljPath); err != nil {
+		t.Errorf("expected .vscode/launch.json to be written: %v", err)
 	}
 }
