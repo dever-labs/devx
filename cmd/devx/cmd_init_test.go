@@ -141,8 +141,14 @@ func TestWriteInitManifest_NodeWithoutPackageJSONHasNoSetupBlock(t *testing.T) {
 
 func TestWriteInitManifest_NvmrcWithoutManagerFallsBackToOSPackageManager(t *testing.T) {
 	// No version manager and no corepack on PATH -> deterministic fallback.
+	// Also override HOME: hosted CI runners (e.g. GitHub Actions'
+	// ubuntu-latest image) ship nvm pre-installed under $HOME/.nvm, which
+	// would otherwise make NodeVersionManager() find it regardless of PATH.
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("NVM_DIR", "")
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir) // os.UserHomeDir() uses this on Windows
 
 	dir := chdirTemp(t)
 	writeInitTestFile(t, dir, ".nvmrc", "20.11.0")
