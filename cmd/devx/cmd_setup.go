@@ -16,7 +16,7 @@ func runSetup(ctx context.Context, args []string) error {
 	outputJSON := fs.Bool("json", false, "Emit results as JSON")
 	_ = fs.Parse(args)
 
-	manifest, err := loadManifestOnly()
+	manifest, err := loadManifest()
 	if err != nil {
 		return err
 	}

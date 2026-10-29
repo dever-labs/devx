@@ -12,17 +12,7 @@ var version = "dev"
 const (
 	manifestFile = "devx.yaml"
 	devxDir      = ".devx"
-	composeFile  = "compose.yaml"
-	k8sFile      = "k8s.yaml"
-	stateFile    = "state.json"
-	lockFile     = "devx.lock"
 )
-
-type state struct {
-	Profile   string `json:"profile"`
-	Runtime   string `json:"runtime"`
-	Telemetry bool   `json:"telemetry"`
-}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -54,6 +44,8 @@ func main() {
 		err = runSetup(ctx, args)
 	case "validate":
 		err = runValidate(args)
+	case "tasks":
+		err = runTasks(args)
 	case "render":
 		err = runRender(ctx, args)
 	case "lock":
@@ -81,7 +73,7 @@ func main() {
 	case "auth":
 		err = runAuth(ctx, args)
 	case "new":
-		err = runNew(ctx, args)
+		err = runNew(args)
 	case "version", "--version", "-v":
 		fmt.Println("devx " + version)
 		return
@@ -89,9 +81,10 @@ func main() {
 		printUsage()
 		return
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-		printUsage()
-		os.Exit(1)
+		// `devx <name>` is shorthand for `devx run <name>` — reaching
+		// here already means <name> isn't a built-in command, since
+		// those are all handled above and always take precedence.
+		err = runRun(ctx, os.Args[1:])
 	}
 
 	if err != nil {
@@ -101,24 +94,24 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("devx - cross-platform dev orchestrator")
+	fmt.Println("devx - cross-platform dev task orchestrator")
 	fmt.Println("\nUsage:")
 	fmt.Println("  devx init                          interactive project scaffold (devx.yaml + devcontainer)")
 	fmt.Println("  devx setup [--fix] [--json]")
-	fmt.Println("  devx run [script]                  run a script from devx.yaml")
-	fmt.Println("  devx clone <repo> [dir]            clone repo and run devx setup")
-	fmt.Println("  devx up [--profile local|ci|k8s] [--build] [--pull]")
-	fmt.Println("  devx down [--volumes]")
-	fmt.Println("  devx status [--json]               project + devcontainer + AI status")
-	fmt.Println("  devx logs [service] [--follow] [--since 10m] [--json]")
-	fmt.Println("  devx exec <service> -- <cmd...>")
-	fmt.Println("  devx doctor [--fix] [--json]       health-check all tools, backends, and config")
+	fmt.Println("  devx up [<name...>] [-d|--detach] [--dry-run] [--keep-going] [--group <name>]")
+	fmt.Println("                                      bring up the task graph (or a partial closure)")
+	fmt.Println("  devx run <name...> [--dry-run] [--watch]")
+	fmt.Println("                                      run task(s) directly, respecting deps")
+	fmt.Println("  devx <name>                         shorthand for 'devx run <name>'")
+	fmt.Println("  devx down [--force]                stop every running detached task")
+	fmt.Println("  devx status [--json]               task + project + devcontainer + AI status")
+	fmt.Println("  devx logs [name] [--follow]         tail captured output for one or all running tasks")
+	fmt.Println("  devx exec <name> -- <cmd...>        run a command inside a running task's container")
+	fmt.Println("  devx tasks [--json]                 dump the full resolved task list")
+	fmt.Println("  devx doctor [--fix] [--json]        health-check tools, requires:, and port collisions")
 	fmt.Println("  devx validate [--file path]")
-	fmt.Println("  devx render compose|k8s [--write]")
-	fmt.Println("  devx lock update")
-	fmt.Println("  devx providers install|list")
-	fmt.Println("  devx export --format compose|k8s|helm|terraform [--profile name]")
-	fmt.Println("  devx ai                            AI setup wizard or launch configured tool")
+	fmt.Println("  devx clone <repo> [dir]             clone repo and run devx setup")
+	fmt.Println("  devx ai                             AI setup wizard or launch configured tool")
 	fmt.Println("  devx ai chat [question]            one-off AI question")
 	fmt.Println("  devx ai setup|status|reset")
 	fmt.Println("  devx ai model list|pull|remove")
@@ -130,10 +123,12 @@ func printUsage() {
 	fmt.Println("  devx dev ps")
 	fmt.Println("  devx env [--show]                  show/validate env vars from devcontainer + .env")
 	fmt.Println("  devx auth                          check auth status for GitHub, Anthropic, OpenAI")
-	fmt.Println("  devx new service|dep               add a service or dependency to devx.yaml")
+	fmt.Println("  devx new <name> [--run <cmd>]      append a minimal task skeleton to devx.yaml")
 	fmt.Println("  devx ci [--write] [--stack dotnet|node|go|python]")
 	fmt.Println("  devx ci run [--job <name>]         run CI locally with act")
 	fmt.Println("  devx update [--check]              update devx to latest version")
 	fmt.Println("  devx completion bash|zsh|fish      generate shell completions")
 	fmt.Println("  devx version")
+	fmt.Println("\nRemoved in the task-based devx.yaml model (see docs/design/task-executor-refactor.md):")
+	fmt.Println("  devx render, devx lock, devx providers, devx export — run: is executed directly, never rendered to compose/k8s/helm/terraform.")
 }

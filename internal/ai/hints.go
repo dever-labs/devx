@@ -36,14 +36,18 @@ func DetectFrameworks(serviceDir string) []FrameworkHint {
 	var hints []FrameworkHint
 
 	// .NET
-	if anyMatch(files, func(f string) bool { return strings.HasSuffix(f, ".csproj") || strings.HasSuffix(f, ".fsproj") }) {
+	csprojFiles := matchedFiles(files, func(f string) bool { return strings.HasSuffix(f, ".csproj") || strings.HasSuffix(f, ".fsproj") })
+	if len(csprojFiles) > 0 {
 		lang := "dotnet"
 		framework := "aspnetcore"
-		// Check for EF Core in csproj content
-		if hasContentMatch(serviceDir, files, ".csproj", "EntityFramework") {
-			framework = "aspnetcore-efcore"
+		// Check for EF Core in any matched *.csproj/*.fsproj file's content.
+		for _, f := range csprojFiles {
+			if hasContentMatch(serviceDir, files, f, "EntityFramework") {
+				framework = "aspnetcore-efcore"
+				break
+			}
 		}
-		hints = append(hints, FrameworkHint{Language: lang, Framework: framework, Files: matchedFiles(files, func(f string) bool { return strings.HasSuffix(f, ".csproj") })})
+		hints = append(hints, FrameworkHint{Language: lang, Framework: framework, Files: csprojFiles})
 	}
 
 	// Node.js
@@ -181,15 +185,6 @@ func detectJvmFramework(dir string, files []string) string {
 func contains(slice []string, s string) bool {
 	for _, v := range slice {
 		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-func anyMatch(slice []string, fn func(string) bool) bool {
-	for _, v := range slice {
-		if fn(v) {
 			return true
 		}
 	}

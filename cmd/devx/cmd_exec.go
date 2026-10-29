@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"os"
+	"os/exec"
+
+	"github.com/dever-labs/devx/internal/task"
 )
 
 func runExec(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("exec requires a service name")
+		return errors.New("exec requires a task name")
 	}
-
 	sep := -1
-	for i, arg := range args {
-		if arg == "--" {
+	for i, a := range args {
+		if a == "--" {
 			sep = i
 			break
 		}
@@ -23,38 +25,37 @@ func runExec(ctx context.Context, args []string) error {
 		return errors.New("exec requires a command after --")
 	}
 
-	service := args[0]
+	name := args[0]
 	cmdArgs := args[sep+1:]
 
-	manifest, profName, prof, err := loadProfile("")
+	m, err := loadValidManifest()
 	if err != nil {
 		return err
 	}
-
-	if profileRuntime(prof) == "k8s" {
-		return errors.New("exec for k8s runtime is not supported yet")
+	if _, ok := m.Tasks[name]; !ok {
+		return fmt.Errorf("unknown task %q", name)
 	}
 
-	rt, err := selectRuntime(ctx)
+	state, err := task.LoadState(stateFilePath())
 	if err != nil {
 		return err
 	}
-
-	enableTelemetry := telemetryFromState()
-	composePath := filepath.Join(devxDir, composeFile)
-	if err := ensureDevxDir(); err != nil {
-		return err
+	entry, ok := state.Lookup(name)
+	if !ok {
+		return fmt.Errorf("task %q isn't currently running", name)
 	}
-	if err := writeCompose(composePath, manifest, profName, prof, nil, enableTelemetry); err != nil {
-		return err
+	if !entry.IsContainer {
+		return fmt.Errorf("task %q is a plain process, not a container — exec isn't supported for process-shaped tasks in this phase", name)
 	}
 
-	code, err := rt.Exec(ctx, composePath, manifest.Project.Name, service, cmdArgs)
-	if err != nil {
-		return err
+	runtime := "docker"
+	if !lookPathQuiet("docker") && lookPathQuiet("podman") {
+		runtime = "podman"
 	}
-	if code != 0 {
-		return fmt.Errorf("exec exited with code %d", code)
-	}
-	return nil
+	full := append([]string{"exec", "-it", entry.ContainerName}, cmdArgs...)
+	cmd := exec.CommandContext(ctx, runtime, full...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

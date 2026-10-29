@@ -98,33 +98,32 @@ func runInit(args []string) error {
 func writeInitManifest(projectName, stack string, withAI bool) error {
 	var sb strings.Builder
 
+	sb.WriteString("# yaml-language-server: $schema=https://raw.githubusercontent.com/dever-labs/devx/main/schemas/devx.schema.json\n")
 	sb.WriteString("version: 1\n\nproject:\n")
-	sb.WriteString(fmt.Sprintf("  name: %s\n", projectName))
-	sb.WriteString("  defaultProfile: local\n")
+	fmt.Fprintf(&sb, "  name: %s\n", projectName)
 
 	if withAI {
 		sb.WriteString("\n# AI configuration — run 'devx ai' to set up\n")
 		sb.WriteString("ai:\n  provider: local\n  local:\n    backend: auto\n")
 	}
 
-	sb.WriteString("\n# Scripts runnable with: devx run <name>\n")
-	sb.WriteString("scripts:\n")
+	sb.WriteString("\n# Tasks runnable with: devx run <name> (or devx <name>)\n")
 	switch stack {
 	case "dotnet":
-		sb.WriteString("  - name: build\n    run: dotnet build\n    desc: Build the solution\n")
-		sb.WriteString("  - name: test\n    run: dotnet test --logger \"console;verbosity=minimal\"\n    desc: Run all tests\n")
+		sb.WriteString("build:\n  desc: Build the solution\n  run: dotnet build\n\n")
+		sb.WriteString("test:\n  desc: Run all tests\n  run: dotnet test --logger \"console;verbosity=minimal\"\n")
 	case "node":
-		sb.WriteString("  - name: build\n    run: npm run build\n    desc: Build\n")
-		sb.WriteString("  - name: test\n    run: npm test\n    desc: Run tests\n")
-		sb.WriteString("  - name: dev\n    run: npm run dev\n    desc: Start dev server\n")
+		sb.WriteString("build:\n  desc: Build\n  run: npm run build\n\n")
+		sb.WriteString("test:\n  desc: Run tests\n  run: npm test\n\n")
+		sb.WriteString("dev:\n  desc: Start dev server\n  run: npm run dev\n")
 	case "go":
-		sb.WriteString("  - name: build\n    run: go build ./...\n    desc: Build all packages\n")
-		sb.WriteString("  - name: test\n    run: go test ./...\n    desc: Run all tests\n")
+		sb.WriteString("build:\n  desc: Build all packages\n  run: go build ./...\n\n")
+		sb.WriteString("test:\n  desc: Run all tests\n  run: go test ./...\n")
 	case "python":
-		sb.WriteString("  - name: test\n    run: pytest\n    desc: Run tests\n")
-		sb.WriteString("  - name: lint\n    run: ruff check .\n    desc: Lint\n")
+		sb.WriteString("test:\n  desc: Run tests\n  run: pytest\n\n")
+		sb.WriteString("lint:\n  desc: Lint\n  run: ruff check .\n")
 	default:
-		sb.WriteString("  - name: build\n    run: echo 'add your build command here'\n    desc: Build\n")
+		sb.WriteString("build:\n  desc: Build\n  run: echo 'add your build command here'\n")
 	}
 
 	return os.WriteFile(manifestFile, []byte(sb.String()), 0644)

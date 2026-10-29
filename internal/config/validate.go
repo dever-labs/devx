@@ -22,19 +22,20 @@ func joinIssues(issues []string) string {
 	return strings.Join(issues, "\n- ")
 }
 
+var validScopes = map[string]bool{"": true, "workspace": true, "shared": true}
+var validRestarts = map[string]bool{"": true, "never": true, "on-failure": true, "always": true}
+
+// Validate checks the merged Manifest (after Load has resolved includes:)
+// for structural problems: unknown deps, cycles are caught separately by
+// the scheduler's graph build, field combinations that are never valid
+// regardless of a task's inferred shape, and reserved-name collisions.
 func Validate(m *Manifest) error {
 	var issues []string
 	if m.Version != 1 {
 		issues = append(issues, "version must be 1")
 	}
-	if m.Project.Name == "" {
-		issues = append(issues, "project.name is required")
-	}
-	if m.Project.DefaultProfile == "" {
-		issues = append(issues, "project.defaultProfile is required")
-	}
-	if len(m.Profiles) == 0 {
-		issues = append(issues, "profiles are required")
+	if len(m.Tasks) == 0 {
+		issues = append(issues, "at least one task is required")
 	}
 	if m.AI != nil {
 		if m.AI.Provider == "" {
@@ -44,93 +45,55 @@ func Validate(m *Manifest) error {
 			issues = append(issues, "ai.model is required when ai block is present")
 		}
 	}
+
+	for name, t := range m.Tasks {
+		issues = append(issues, validateTask(m, name, t)...)
+	}
+
 	if len(issues) > 0 {
 		return &ValidationError{Issues: issues}
-	}
-	if _, ok := m.Profiles[m.Project.DefaultProfile]; !ok {
-		return &ValidationError{Issues: []string{"project.defaultProfile does not exist"}}
 	}
 	return nil
 }
 
-func ValidateProfile(m *Manifest, profile string) error {
-	prof, ok := m.Profiles[profile]
-	if !ok {
-		return &ValidationError{Issues: []string{"profile does not exist"}}
-	}
-
+func validateTask(m *Manifest, name string, t Task) []string {
 	var issues []string
-	if prof.Runtime != "" && prof.Runtime != "compose" && prof.Runtime != "k8s" {
-		issues = append(issues, fmt.Sprintf("profile '%s' runtime must be compose or k8s", profile))
+
+	if t.Run == "" {
+		issues = append(issues, fmt.Sprintf("task %q: run is required", name))
 	}
-	for name, svc := range prof.Services {
-		if svc.Image == "" && svc.Build == nil {
-			issues = append(issues, fmt.Sprintf("service '%s' must define image or build", name))
-		}
-		for _, dep := range svc.DependsOn {
-			if !existsServiceOrDep(prof, dep) {
-				issues = append(issues, fmt.Sprintf("service '%s' dependsOn '%s' which does not exist", name, dep))
-			}
+
+	for _, dep := range t.Deps {
+		if _, ok := m.Tasks[dep]; !ok {
+			issues = append(issues, fmt.Sprintf("task %q: deps references unknown task %q", name, dep))
 		}
 	}
 
-	for name, dep := range prof.Deps {
-		if dep.Kind == "" && dep.Image == "" {
-			issues = append(issues, fmt.Sprintf("dep '%s' must define image (or set kind to use a provider's default image)", name))
-		}
-		if dep.Kind != "" && dep.Version == "" {
-			issues = append(issues, fmt.Sprintf("dep '%s' has kind '%s' but is missing version — version is required when kind is set", name, dep.Kind))
-		}
-		if dep.Source != "" && !strings.Contains(dep.Source, "/") {
-			issues = append(issues, fmt.Sprintf("dep '%s' source must be in org/name format (e.g. devx-labs/postgres)", name))
-		}
-		for i, c := range dep.Connect {
-			if c.Service == "" {
-				issues = append(issues, fmt.Sprintf("dep '%s' connect[%d] must specify a service", name, i))
-			} else if _, ok := prof.Services[c.Service]; !ok {
-				issues = append(issues, fmt.Sprintf("dep '%s' connect[%d] references service '%s' which does not exist", name, i, c.Service))
-			}
+	if t.Interactive && t.Detached != nil && *t.Detached {
+		issues = append(issues, fmt.Sprintf("task %q: interactive: true cannot be combined with detached: true", name))
+	}
+
+	if len(t.Generates) > 0 && t.Detached != nil && *t.Detached {
+		issues = append(issues, fmt.Sprintf("task %q: generates: is invalid on a detached task (mtime \"up to date\" skip semantics only apply to one-shot recipes) — sources: alone is valid on detached tasks for --watch", name))
+	}
+
+	if !validRestarts[t.Restart] {
+		issues = append(issues, fmt.Sprintf("task %q: restart must be never, on-failure, or always", name))
+	}
+	if t.Restart != "" && (t.Detached == nil || !*t.Detached) {
+		issues = append(issues, fmt.Sprintf("task %q: restart is only meaningful on a detached task", name))
+	}
+
+	if !validScopes[t.Scope] {
+		issues = append(issues, fmt.Sprintf("task %q: scope must be workspace or shared", name))
+	}
+	if t.Scope == "shared" {
+		if strings.Contains(t.Run, "${workspace}") || strings.Contains(t.Run, "${port}") {
+			issues = append(issues, fmt.Sprintf("task %q: scope: shared tasks cannot reference ${workspace}/${port} — a shared resource resolving differently per workspace defeats the point of sharing it", name))
 		}
 	}
 
-	allHooks := append(prof.Hooks.AfterUp, prof.Hooks.BeforeDown...)
-	for i, h := range allHooks {
-		hasExec := h.Exec != ""
-		hasRun := h.Run != ""
-		if !hasExec && !hasRun {
-			issues = append(issues, fmt.Sprintf("hook[%d] must set either exec or run", i))
-		}
-		if hasExec && hasRun {
-			issues = append(issues, fmt.Sprintf("hook[%d] cannot set both exec and run", i))
-		}
-		if hasExec && h.Service == "" {
-			issues = append(issues, fmt.Sprintf("hook[%d] exec requires service to be set", i))
-		}
-		if hasRun && h.Service != "" {
-			issues = append(issues, fmt.Sprintf("hook[%d] run does not use service", i))
-		}
-		if h.Background && hasExec {
-			issues = append(issues, fmt.Sprintf("hook[%d] background is only supported for run hooks", i))
-		}
-		if h.Name != "" && hasExec {
-			issues = append(issues, fmt.Sprintf("hook[%d] name is only supported for run hooks", i))
-		}
-	}
-
-	if len(issues) > 0 {
-		return &ValidationError{Issues: issues}
-	}
-	return nil
-}
-
-func existsServiceOrDep(prof Profile, name string) bool {
-	if _, ok := prof.Services[name]; ok {
-		return true
-	}
-	if _, ok := prof.Deps[name]; ok {
-		return true
-	}
-	return false
+	return issues
 }
 
 // ValidateTools checks that all tool declarations are well-formed.

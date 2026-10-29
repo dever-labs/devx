@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,73 +12,88 @@ import (
 	"strings"
 
 	"github.com/dever-labs/devx/internal/localai"
-	"github.com/dever-labs/devx/internal/runtime"
-	"github.com/dever-labs/devx/internal/ui"
+	"github.com/dever-labs/devx/internal/task"
 )
 
 func runStatus(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	outputJSON := fs.Bool("json", false, "Emit status as JSON")
-	_ = fs.Parse(args)
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "Emit status as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
-	// ── Project header ────────────────────────────────────────────────────────
-	if !*outputJSON {
+	if !*jsonOut {
 		printProjectHeader()
 	}
 
-	manifest, profName, prof, err := loadProfile("")
+	m, err := loadValidManifest()
 	if err != nil {
-		if !*outputJSON {
+		if !*jsonOut {
 			fmt.Println()
 		}
 		return err
 	}
-
-	if profileRuntime(prof) == "k8s" {
-		return errors.New("status for k8s runtime is not supported yet")
-	}
-
-	rt, err := selectRuntime(ctx)
+	state, err := task.LoadState(stateFilePath())
 	if err != nil {
 		return err
 	}
 
-	enableTelemetry := telemetryFromState()
-	composePath := filepath.Join(devxDir, composeFile)
-	if err := ensureDevxDir(); err != nil {
-		return err
+	type row struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+		Detail string `json:"detail,omitempty"`
 	}
-	if err := writeCompose(composePath, manifest, profName, prof, nil, enableTelemetry); err != nil {
-		return err
+	var rows []row
+	for name := range m.Tasks {
+		entry, ok := state.Lookup(name)
+		if !ok {
+			rows = append(rows, row{Name: name, Status: "not running"})
+			continue
+		}
+		status := "running"
+		if entry.IsContainer {
+			status, _ = containerStatus(ctx, entry.ContainerName)
+		}
+		detail := ""
+		if entry.IsContainer {
+			detail = entry.ContainerName
+		}
+		rows = append(rows, row{Name: name, Status: status, Detail: detail})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+
+	if *jsonOut {
+		data, err := json.MarshalIndent(rows, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
 	}
 
-	statuses, err := rt.Status(ctx, composePath, manifest.Project.Name)
-	if err != nil {
-		return err
+	maxLen := 0
+	for _, r := range rows {
+		if len(r.Name) > maxLen {
+			maxLen = len(r.Name)
+		}
 	}
-
-	sort.Slice(statuses, func(i, j int) bool {
-		return statuses[i].Name < statuses[j].Name
-	})
-
-	if *outputJSON {
-		return printStatusJSON(statuses)
+	for _, r := range rows {
+		fmt.Printf("  %-*s  %-12s %s\n", maxLen, r.Name, r.Status, r.Detail)
 	}
-
-	headers := []string{"Service", "State", "Health", "Ports"}
-	rows := make([][]string, 0, len(statuses))
-	for _, st := range statuses {
-		rows = append(rows, []string{st.Name, st.State, st.Health, st.Ports})
-	}
-	ui.PrintTable(os.Stdout, headers, rows)
 	return nil
 }
 
-// printProjectHeader shows project name, devcontainer status, and AI backend.
+func containerStatus(ctx context.Context, name string) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Status}}", name).CombinedOutput()
+	if err != nil {
+		return "exited", nil
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func printProjectHeader() {
-	// Project name from manifest (best-effort).
 	projectName := ""
-	if m, err := loadManifestOnly(); err == nil {
+	if m, err := loadManifest(); err == nil {
 		projectName = m.Project.Name
 	}
 	if projectName == "" {
@@ -87,25 +101,15 @@ func printProjectHeader() {
 		projectName = filepath.Base(cwd)
 	}
 	fmt.Printf("Project  %s\n", projectName)
-
-	// Devcontainer state.
-	dcState := devcontainerState()
-	fmt.Printf("DevCon   %s\n", dcState)
-
-	// AI state.
-	aiState := aiStatusLine()
-	fmt.Printf("AI       %s\n", aiState)
-
+	fmt.Printf("DevCon   %s\n", devcontainerState())
+	fmt.Printf("AI       %s\n", aiStatusLine())
 	fmt.Println()
 }
 
 func devcontainerState() string {
-	// Check for devcontainer.json.
 	if !fileExists(".devcontainer/devcontainer.json") && !fileExists("devcontainer.json") {
 		return "not configured"
 	}
-
-	// Use docker ps to check for a running devcontainer.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "unknown"
@@ -128,13 +132,10 @@ func aiStatusLine() string {
 	if err != nil || cfg == nil {
 		return "not configured — run 'devx ai'"
 	}
-
 	line := fmt.Sprintf("provider=%s tool=%s", cfg.Provider, cfg.Tool)
 	if cfg.Model != "" {
 		line += " model=" + cfg.Model
 	}
-
-	// For local/remote backends, probe the backend.
 	if cfg.Provider == "local" || cfg.Provider == "remote" {
 		status, _ := localai.DetectWithEndpoint(cfg.Backend, cfg.Endpoint)
 		if status != nil {
@@ -144,23 +145,4 @@ func aiStatusLine() string {
 		}
 	}
 	return line
-}
-
-func printStatusJSON(statuses []runtime.ServiceStatus) error {
-	type jsonStatus struct {
-		Name   string `json:"name"`
-		State  string `json:"state"`
-		Health string `json:"health"`
-		Ports  string `json:"ports"`
-	}
-	out := make([]jsonStatus, len(statuses))
-	for i, s := range statuses {
-		out[i] = jsonStatus{Name: s.Name, State: s.State, Health: s.Health, Ports: s.Ports}
-	}
-	data, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return err
-	}
-	fmt.Println(string(data))
-	return nil
 }

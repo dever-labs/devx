@@ -3,41 +3,64 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
+// reservedTopLevelKeys are the only top-level devx.yaml keys that are not
+// task names. Everything else is a Task.
+var reservedTopLevelKeys = map[string]bool{
+	"version":  true,
+	"project":  true,
+	"ai":       true,
+	"tools":    true,
+	"setup":    true,
+	"vars":     true,
+	"includes": true,
+	"agents":   true,
+}
+
+// Manifest is the parsed, not-yet-merged shape of a single devx.yaml file.
+// Task names are top-level keys directly — no tasks:/services:/profiles:
+// wrapper. Use Load to get a fully merged Manifest with includes: resolved
+// and task names namespaced.
 type Manifest struct {
-	Version  int                `yaml:"version"`
-	Project  Project            `yaml:"project"`
-	Registry Registry           `yaml:"registry"`
-	AI       *AIConfig          `yaml:"ai,omitempty"`
-	Profiles map[string]Profile `yaml:"profiles"`
+	Version int       `yaml:"version"`
+	Project Project   `yaml:"project"`
+	AI      *AIConfig `yaml:"ai,omitempty"`
 	// Tools declares required SDKs, runtimes, and CLI tools for the project.
 	// Use `devx doctor` to check and `devx setup` (or `devx doctor --fix`) to install.
 	Tools []Tool `yaml:"tools,omitempty"`
 	// Setup declares ordered host-side commands to run after tool installation.
 	// Use `devx setup` to execute. RunOnce steps are skipped when unchanged.
 	Setup []SetupStep `yaml:"setup,omitempty"`
-	// Scripts declares named shell commands runnable with `devx run <name>`.
-	Scripts []Script `yaml:"scripts,omitempty"`
+	// Vars are plain textual ${VAR} substitution defaults, lowest-priority
+	// in the CLI override > inherited env > .env/.env.local > vars: chain.
+	Vars map[string]string `yaml:"vars,omitempty"`
+	// Includes merges another devx.yaml's tasks into this one graph,
+	// namespaced as "<name>:<task>". Not a recursive sub-process per file.
+	Includes map[string]string `yaml:"includes,omitempty"`
+	// Agents are named shell commands launchable via `devx workspace agent`.
+	Agents map[string]string `yaml:"agents,omitempty"`
+	// Tasks holds every other top-level key, keyed by its own task name
+	// (not yet namespaced — see Load for the merged, namespaced result).
+	Tasks map[string]Task `yaml:"-"`
+
+	// dir is the directory this file lives in — the default working
+	// directory for every task it directly defines. Not serialized.
+	dir string
 }
 
-// Script is a named, runnable shell command declared in devx.yaml.
-// Run with: devx run <name>
-type Script struct {
-	Name      string `yaml:"name"`
-	Run       string `yaml:"run"`
-	Desc      string `yaml:"desc,omitempty"`
-	Workdir   string `yaml:"workdir,omitempty"`
-	// Container controls where the script runs when a devcontainer is present.
-	//   auto  (default) — run inside the devcontainer if it is running, host otherwise
-	//   true             — always run inside the devcontainer (fail if not running)
-	//   false            — always run on the host
-	Container string `yaml:"container,omitempty"` // auto | true | false
+// Dir returns the directory the defining devx.yaml file lives in.
+func (m *Manifest) Dir() string { return m.dir }
+
+type Project struct {
+	Name string `yaml:"name"`
 }
 
-// AIConfig holds optional AI provider settings used by 'devx export',
+// AIConfig holds optional AI provider settings used by 'devx ai',
 // automatic connection string detection, and local inference setup.
 // Credentials are read from environment variables:
 //
@@ -46,9 +69,9 @@ type Script struct {
 //	azure-openai: AZURE_OPENAI_KEY
 //	ollama/local: no auth required
 type AIConfig struct {
-	Provider string        `yaml:"provider"` // openai | anthropic | ollama | azure-openai | local
-	Model    string        `yaml:"model"`
-	BaseURL  string        `yaml:"baseURL,omitempty"` // override endpoint
+	Provider string         `yaml:"provider"` // openai | anthropic | ollama | azure-openai | local
+	Model    string         `yaml:"model"`
+	BaseURL  string         `yaml:"baseURL,omitempty"` // override endpoint
 	Local    *LocalAIConfig `yaml:"local,omitempty"`
 }
 
@@ -65,117 +88,135 @@ type LocalAIConfig struct {
 	AutocompleteModel string `yaml:"autocompleteModel,omitempty"`
 }
 
-type Project struct {
-	Name           string `yaml:"name"`
-	DefaultProfile string `yaml:"defaultProfile"`
+// ReadyCheck overrides how devx decides a detached task is ready. Exactly
+// one of HTTP, TCP, or Cmd should be set; when all are empty, readiness is
+// inferred from the task's run: text (see the Inference package doc).
+type ReadyCheck struct {
+	HTTP string `yaml:"http,omitempty"`
+	TCP  string `yaml:"tcp,omitempty"`
+	Cmd  string `yaml:"cmd,omitempty"`
 }
 
-type Registry struct {
-	Prefix string `yaml:"prefix"`
+// Task is either a bare string (just the command) or an object with any of
+// the optional fields below. See docs/design/task-executor-refactor.md for
+// the full field-by-field rationale.
+type Task struct {
+	Deps          []string          `yaml:"deps,omitempty"`
+	Run           string            `yaml:"run,omitempty"`
+	Ready         *ReadyCheck       `yaml:"ready,omitempty"`
+	Detached      *bool             `yaml:"detached,omitempty"`
+	Desc          string            `yaml:"desc,omitempty"`
+	Group         string            `yaml:"group,omitempty"`
+	Env           map[string]string `yaml:"env,omitempty"`
+	OS            []string          `yaml:"os,omitempty"`
+	Interactive   bool              `yaml:"interactive,omitempty"`
+	Sources       []string          `yaml:"sources,omitempty"`
+	Generates     []string          `yaml:"generates,omitempty"`
+	Port          int               `yaml:"port,omitempty"`
+	Timeout       string            `yaml:"timeout,omitempty"`
+	Restart       string            `yaml:"restart,omitempty"` // never | on-failure | always
+	StopTimeout   string            `yaml:"stopTimeout,omitempty"`
+	Shell         string            `yaml:"shell,omitempty"`
+	Dir           string            `yaml:"dir,omitempty"`
+	Requires      []string          `yaml:"requires,omitempty"`
+	ContainerName string            `yaml:"containerName,omitempty"`
+	Scope         string            `yaml:"scope,omitempty"` // workspace (default) | shared
+
+	// Name is the task's fully namespaced name (e.g. "infra:db"), filled
+	// in by Load. Not set when decoding a raw file in isolation.
+	Name string `yaml:"-"`
+	// SourceDir is the directory of the devx.yaml file that defined this
+	// task — the default working directory for Run/Sources/Generates/Dir.
+	SourceDir string `yaml:"-"`
+	// ScopeVars are the vars: visible to this task's own substitution pass:
+	// its defining file's own vars: merged over the root manifest's vars:
+	// (root as fallback, own file as override) — see "Composition".
+	ScopeVars map[string]string `yaml:"-"`
 }
 
-type Profile struct {
-	Services map[string]Service `yaml:"services"`
-	Deps     map[string]Dep     `yaml:"deps"`
-	Runtime  string             `yaml:"runtime"`
-	Hooks    Hooks              `yaml:"hooks"`
+// UnmarshalYAML accepts either a bare scalar (shorthand for {run: <scalar>})
+// or a full mapping.
+func (t *Task) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		t.Run = node.Value
+		return nil
+	}
+	type rawTask Task
+	var raw rawTask
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*t = Task(raw)
+	return nil
 }
 
-// Hooks defines commands to run at lifecycle points around devx up/down.
-type Hooks struct {
-	AfterUp    []Hook `yaml:"afterUp"`
-	BeforeDown []Hook `yaml:"beforeDown"`
+// UnmarshalYAML splits top-level keys between the fixed reserved fields and
+// the dynamic set of task names, since task names are top-level keys
+// directly rather than nested under a tasks:/services:/profiles: wrapper.
+func (m *Manifest) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("devx.yaml: top level must be a mapping")
+	}
+	m.Tasks = map[string]Task{}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode, valNode := node.Content[i], node.Content[i+1]
+		key := keyNode.Value
+		var err error
+		switch key {
+		case "version":
+			err = valNode.Decode(&m.Version)
+		case "project":
+			err = valNode.Decode(&m.Project)
+		case "ai":
+			err = valNode.Decode(&m.AI)
+		case "tools":
+			err = valNode.Decode(&m.Tools)
+		case "setup":
+			err = valNode.Decode(&m.Setup)
+		case "vars":
+			err = valNode.Decode(&m.Vars)
+		case "includes":
+			err = valNode.Decode(&m.Includes)
+		case "agents":
+			err = valNode.Decode(&m.Agents)
+		default:
+			var t Task
+			if decErr := valNode.Decode(&t); decErr != nil {
+				err = fmt.Errorf("task %q: %w", key, decErr)
+				break
+			}
+			t.Name = key
+			m.Tasks[key] = t
+		}
+		if err != nil {
+			return fmt.Errorf("devx.yaml: key %q: %w", key, err)
+		}
+	}
+	return nil
 }
 
-// Hook is a single lifecycle step. Exactly one of Exec or Run must be set.
-//
-//	exec: runs a command inside an already-running container via `docker compose exec`.
-//	      Service is required.
-//	run:  runs a command on the host via the system shell.
-//	      Set background: true to start the process without waiting for it to exit.
-//	      devx up will stream its output (prefixed with name) and block until it stops.
-//	      Use name to label output lines; defaults to the run command.
-type Hook struct {
-	// Exec is the command to run inside Service (e.g. "migrate up").
-	Exec    string `yaml:"exec"`
-	Service string `yaml:"service"`
-	// Run is a host-side shell command (e.g. "./scripts/seed.sh").
-	Run        string `yaml:"run"`
-	Background bool   `yaml:"background,omitempty"`
-	Name       string `yaml:"name,omitempty"`
-}
-
-type Service struct {
-	Image     string            `yaml:"image"`
-	Build     *Build            `yaml:"build"`
-	Ports     []string          `yaml:"ports"`
-	Env       map[string]string `yaml:"env"`
-	Command   []string          `yaml:"command"`
-	Workdir   string            `yaml:"workdir"`
-	Mount     []string          `yaml:"mount"`
-	DependsOn []string          `yaml:"dependsOn"`
-	Health    *Health           `yaml:"health"`
-}
-
-type Build struct {
-	Context    string `yaml:"context"`
-	Dockerfile string `yaml:"dockerfile"`
-}
-
-type Health struct {
-	HttpGet  string `yaml:"httpGet"`
-	Interval string `yaml:"interval"`
-	Retries  int    `yaml:"retries"`
-}
-
-// Dep is a third-party dependency (database, cache, broker, …) that devx
-// runs as a container. The project fully controls which image to run via
-// Image.
-//
-// When Kind is set, devx downloads a provider plugin that contributes
-// behavioural logic (health checks, compose fragments, connection string
-// templates). Source defaults to "devx-labs/<kind>" if omitted. Version
-// follows the major-version convention: major = dep major version
-// (e.g. "16.1.0" = provider for PostgreSQL 16, provider patch release 1.0).
-//
-// The Connect block lists services that should have connection environment
-// variables injected automatically. Each entry can supply an explicit Env
-// mapping using ${host}, ${port}, or any dep env key as template variables.
-// If Env is omitted and AI is configured in the manifest, devx scans the
-// service source directory and uses the LLM to detect the correct env var names.
-type Dep struct {
-	Kind    string `yaml:"kind,omitempty"`
-	Source  string `yaml:"source,omitempty"`
-	Version string `yaml:"version,omitempty"`
-	Image   string `yaml:"image,omitempty"`
-
-	Env     map[string]string `yaml:"env"`
-	Ports   []string          `yaml:"ports"`
-	Volume  string            `yaml:"volume"`
-	Connect []ConnectEntry    `yaml:"connect,omitempty"`
-}
-
-// ConnectEntry declares a service that a dep should inject connection
-// environment variables into. Env values support template variables:
-//   - ${host}   — the dep's service name within the compose network
-//   - ${port}   — the first container-side port declared in dep.ports
-//   - ${<KEY>}  — any key from the dep's own env block (e.g. ${POSTGRES_PASSWORD})
-//
-// If Env is omitted and devx.yaml has an ai block, devx calls the LLM to
-// detect appropriate env var names by scanning the service's build context.
-type ConnectEntry struct {
-	Service string            `yaml:"service"`
-	Env     map[string]string `yaml:"env,omitempty"`
-}
-
-func Load(path string) (*Manifest, error) {
+// parseFile reads and parses a single devx.yaml file in isolation, without
+// resolving includes:. dir is recorded as every task's default SourceDir.
+func parseFile(path string) (*Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Parse(data)
+	var m Manifest
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	m.dir = filepath.Dir(abs)
+	return &m, nil
 }
 
+// Parse parses a single devx.yaml document from memory, without resolving
+// includes: (any includes: entries are kept but not followed). Primarily
+// for tests; use Load to resolve a real file's includes: graph.
 func Parse(data []byte) (*Manifest, error) {
 	var m Manifest
 	if err := yaml.Unmarshal(data, &m); err != nil {
@@ -184,10 +225,88 @@ func Parse(data []byte) (*Manifest, error) {
 	return &m, nil
 }
 
-func ProfileByName(m *Manifest, name string) (*Profile, error) {
-	prof, ok := m.Profiles[name]
-	if !ok {
-		return nil, fmt.Errorf("profile '%s' not found", name)
+// Load reads path as the root manifest and merges every includes: file's
+// tasks into it, namespaced as "<name>:<task>". Each task's ScopeVars is
+// resolved to that file's own vars: merged over the root's vars: (root as
+// fallback). Returns the merged Manifest with Tasks fully namespaced and
+// SourceDir/ScopeVars set on every task.
+func Load(path string) (*Manifest, error) {
+	root, err := parseFile(path)
+	if err != nil {
+		return nil, err
 	}
-	return &prof, nil
+
+	merged := map[string]Task{}
+	for name, t := range root.Tasks {
+		t.Name = name
+		t.SourceDir = root.dir
+		t.ScopeVars = root.Vars
+		merged[name] = t
+	}
+
+	for ns, incPath := range root.Includes {
+		resolved := incPath
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(root.dir, incPath)
+		}
+		inc, err := parseFile(resolved)
+		if err != nil {
+			return nil, fmt.Errorf("includes.%s: %w", ns, err)
+		}
+		scopeVars := mergeVars(root.Vars, inc.Vars)
+		for name, t := range inc.Tasks {
+			namespaced := ns + ":" + name
+			t.Name = namespaced
+			t.SourceDir = inc.dir
+			t.ScopeVars = scopeVars
+			t.Deps = namespaceDeps(t.Deps, ns, inc.Tasks)
+			if _, collide := merged[namespaced]; collide {
+				return nil, fmt.Errorf("task %q is defined more than once", namespaced)
+			}
+			merged[namespaced] = t
+		}
+	}
+
+	root.Tasks = merged
+	return root, nil
+}
+
+// mergeVars returns a new map with base entries overridden by override
+// entries of the same key — base is the fallback layer.
+func mergeVars(base, override map[string]string) map[string]string {
+	out := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range override {
+		out[k] = v
+	}
+	return out
+}
+
+// namespaceDeps rewrites an included file's own task-local deps: entries
+// to the namespaced names they're merged under (e.g. "db" -> "infra:db"),
+// so intra-file dependencies between two tasks of the same included file
+// keep working after merging. A dep already containing ":" is assumed to
+// be an explicit cross-namespace reference (e.g. "infra:db" written
+// directly in the included file, or another namespace entirely) and is
+// left untouched; a dep that isn't one of inc's own task names is left
+// untouched too, since it may intentionally reference a root-level task.
+func namespaceDeps(deps []string, ns string, incTasks map[string]Task) []string {
+	if len(deps) == 0 {
+		return deps
+	}
+	out := make([]string, len(deps))
+	for i, d := range deps {
+		if strings.Contains(d, ":") {
+			out[i] = d
+			continue
+		}
+		if _, ok := incTasks[d]; ok {
+			out[i] = ns + ":" + d
+			continue
+		}
+		out[i] = d
+	}
+	return out
 }

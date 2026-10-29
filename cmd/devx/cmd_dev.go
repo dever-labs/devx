@@ -394,9 +394,42 @@ func truncate(s string, n int) string {
 }
 
 // stripJSONComments removes // line comments so standard JSON parsing works
-// on devcontainer.json files (which use JSONC format).
+// on devcontainer.json files (which use JSONC format). Tracks whether it is
+// inside a JSON string literal so it doesn't mistake "//" inside a string
+// value (e.g. a "https://..." URL in initializeCommand) for a comment.
 func stripJSONComments(data []byte) []byte {
-	return regexp.MustCompile(`(?m)//[^\n]*`).ReplaceAll(data, nil)
+	out := make([]byte, 0, len(data))
+	inString := false
+	escaped := false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			continue
+		}
+		if c == '/' && i+1 < len(data) && data[i+1] == '/' {
+			// Skip to end of line (but keep the newline itself).
+			for i < len(data) && data[i] != '\n' {
+				i++
+			}
+			i--
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // ── Devcontainer CLI runner ───────────────────────────────────────────────────

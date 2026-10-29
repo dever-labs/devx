@@ -15,7 +15,7 @@ func runDoctor(ctx context.Context, args []string) error {
 	outputJSON := fs.Bool("json", false, "Emit report as JSON")
 	_ = fs.Parse(args)
 
-	manifest, _, _, _ := loadProfile("")
+	manifest, _ := loadManifest()
 
 	report := doctor.Run(ctx, doctor.Options{
 		Manifest: manifest,

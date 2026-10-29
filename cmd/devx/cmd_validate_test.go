@@ -2,193 +2,107 @@ package main
 
 import (
 	"os"
-	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/dever-labs/devx/internal/config"
 )
 
-// writeManifest writes content to devx.yaml in a temp dir and returns
-// the file path and a cleanup func that restores the original working directory.
-func writeManifest(t *testing.T, content string) (string, func()) {
-	t.Helper()
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "devx.yaml")
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	return filePath, func() {}
-}
-
 func TestRunValidate_ValidManifest(t *testing.T) {
-	path, cleanup := writeManifest(t, `version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-`)
-	defer cleanup()
-
-	if err := runValidate([]string{"--file", path}); err != nil {
-		t.Fatalf("expected no error for valid manifest, got: %v", err)
+	writeManifest(t, validManifest)
+	if err := runValidate(nil); err != nil {
+		t.Fatalf("runValidate: %v", err)
 	}
 }
 
-func TestRunValidate_WithTools(t *testing.T) {
-	path, cleanup := writeManifest(t, `version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-tools:
-  - name: go
-    check: "go version"
-    install:
-      linux: "apt-get install golang"
-`)
-	defer cleanup()
-
-	if err := runValidate([]string{"--file", path}); err != nil {
-		t.Fatalf("expected no error for manifest with valid tools, got: %v", err)
-	}
-}
-
-func TestRunValidate_WithSetup(t *testing.T) {
-	path, cleanup := writeManifest(t, `version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-setup:
-  - name: restore
-    run: "npm install"
-    runOnce: true
-    platform: all
-`)
-	defer cleanup()
-
-	if err := runValidate([]string{"--file", path}); err != nil {
-		t.Fatalf("expected no error for manifest with valid setup, got: %v", err)
-	}
-}
-
-func TestRunValidate_InvalidProfile(t *testing.T) {
-	path, cleanup := writeManifest(t, `version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-        dependsOn:
-          - nonexistent-dep
-`)
-	defer cleanup()
-
-	if err := runValidate([]string{"--file", path}); err == nil {
-		t.Fatal("expected error for manifest with invalid profile")
-	}
-}
-
-func TestRunValidate_InvalidTools(t *testing.T) {
-	path, cleanup := writeManifest(t, `version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-tools:
-  - name: badtool
-`)
-	defer cleanup()
-
-	if err := runValidate([]string{"--file", path}); err == nil {
-		t.Fatal("expected error for tool missing check command")
-	}
-}
-
-func TestRunValidate_InvalidSetup(t *testing.T) {
-	path, cleanup := writeManifest(t, `version: 1
-project:
-  name: my-app
-  defaultProfile: local
-profiles:
-  local:
-    services:
-      api:
-        image: nginx:alpine
-setup:
-  - name: bad-step
-    run: "echo ok"
-    platform: freebsd
-`)
-	defer cleanup()
-
-	if err := runValidate([]string{"--file", path}); err == nil {
-		t.Fatal("expected error for step with invalid platform")
-	}
-}
-
-func TestRunValidate_FileNotFound(t *testing.T) {
-	err := runValidate([]string{"--file", "/nonexistent/path/devx.yaml"})
-	if err == nil {
-		t.Fatal("expected error for nonexistent file")
+func TestRunValidate_MissingManifest(t *testing.T) {
+	chdirTemp(t)
+	if err := runValidate(nil); err == nil {
+		t.Fatal("expected error for missing devx.yaml")
 	}
 }
 
 func TestRunValidate_MalformedYAML(t *testing.T) {
-	path, cleanup := writeManifest(t, `:::this is not valid yaml:::`)
-	defer cleanup()
-
-	if err := runValidate([]string{"--file", path}); err == nil {
-		t.Fatal("expected error for malformed YAML")
+	writeManifest(t, "not: valid: yaml: [")
+	if err := runValidate(nil); err == nil {
+		t.Fatal("expected error for malformed devx.yaml")
 	}
 }
 
-func TestRunValidate_DefaultFile(t *testing.T) {
-	// Uses devx.yaml from the current directory.
-	defer chdirTemp(t, validManifest)()
-
-	if err := runValidate([]string{}); err != nil {
-		t.Fatalf("expected no error using default file path, got: %v", err)
+func TestRunValidate_FileFlag(t *testing.T) {
+	chdirTemp(t)
+	if err := os.WriteFile("custom.yaml", []byte(validManifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runValidate([]string{"--file", "custom.yaml"}); err != nil {
+		t.Fatalf("runValidate with --file: %v", err)
 	}
 }
 
-// ── setupStatusIcon ────────────────────────────────────────────────────────
-
-func TestSetupStatusIcon(t *testing.T) {
-	cases := []struct {
-		status string
-		want   string
-	}{
-		{"ok", "✓"},
-		{"installed", "✓"},
-		{"skipped", "–"},
-		{"not-applicable", "–"},
-		{"failed", "✗"},
-		{"missing", "✗"},
-		{"unknown", "?"},
-		{"", "?"},
+func TestRunValidate_TaskMissingRun(t *testing.T) {
+	writeManifest(t, `version: 1
+project:
+  name: my-app
+api: {}
+`)
+	if err := runValidate(nil); err == nil {
+		t.Fatal("expected error for task missing run:")
 	}
-	for _, tc := range cases {
-		got := setupStatusIcon(tc.status)
-		if got != tc.want {
-			t.Errorf("setupStatusIcon(%q) = %q, want %q", tc.status, got, tc.want)
+}
+
+func TestExtendedWarnings_BuiltinNameCollision(t *testing.T) {
+	m := mustLoad(t, `version: 1
+project:
+  name: my-app
+up:
+  run: "echo hi"
+`)
+	warnings := extendedWarnings(m)
+	if !containsSubstring(warnings, "collides with a built-in command name") {
+		t.Errorf("expected a built-in-collision warning, got %v", warnings)
+	}
+}
+
+func TestExtendedWarnings_PortCollision(t *testing.T) {
+	m := mustLoad(t, `version: 1
+project:
+  name: my-app
+api:
+  run: "nc -l 8080"
+  port: 8080
+web:
+  run: "nc -l 8080"
+  port: 8080
+`)
+	warnings := extendedWarnings(m)
+	if !containsSubstring(warnings, "is used by multiple tasks") {
+		t.Errorf("expected a port-collision warning, got %v", warnings)
+	}
+}
+
+func TestExtendedWarnings_NoWarningsForCleanManifest(t *testing.T) {
+	m := mustLoad(t, validManifest)
+	if warnings := extendedWarnings(m); len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
+	}
+}
+
+func mustLoad(t *testing.T, content string) *config.Manifest {
+	t.Helper()
+	writeManifest(t, content)
+	m, err := loadManifest()
+	if err != nil {
+		t.Fatalf("loadManifest: %v", err)
+	}
+	return m
+}
+
+func containsSubstring(items []string, substr string) bool {
+	for _, item := range items {
+		if strings.Contains(item, substr) {
+			return true
 		}
 	}
+	return false
 }
+

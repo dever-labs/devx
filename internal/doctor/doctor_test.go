@@ -2,11 +2,34 @@ package doctor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/dever-labs/devx/internal/config"
 )
+
+// chdirTemp changes the working directory to a fresh temp dir and restores
+// the original directory on test cleanup. Manually implemented (rather than
+// t.Chdir) because go.mod declares go 1.21 and golangci-lint's stdversion
+// check gates stdlib APIs against the declared directive.
+func chdirTemp(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(old)
+	})
+	return dir
+}
 
 func TestHasFailures_Empty(t *testing.T) {
 	r := Report{}
@@ -152,5 +175,235 @@ func TestDoctorIcon(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("doctorIcon(%q) = %q, want %q", tc.status, got, tc.want)
 		}
+	}
+}
+
+// ── checkPortConflicts ───────────────────────────────────────────────────
+
+func TestCheckPortConflicts_NoDuplicates(t *testing.T) {
+	m := &config.Manifest{Tasks: map[string]config.Task{
+		"web": {Name: "web", Run: "echo web", Port: 8080},
+		"api": {Name: "api", Run: "echo api", Port: 8081},
+	}}
+	checks := checkPortConflicts(m)
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check, got %d: %+v", len(checks), checks)
+	}
+	if checks[0].Status != "PASS" {
+		t.Errorf("expected PASS for non-conflicting ports, got %+v", checks[0])
+	}
+}
+
+func TestCheckPortConflicts_DuplicatePort(t *testing.T) {
+	m := &config.Manifest{Tasks: map[string]config.Task{
+		"web":  {Name: "web", Run: "echo web", Port: 8080},
+		"web2": {Name: "web2", Run: "echo web2", Port: 8080},
+	}}
+	checks := checkPortConflicts(m)
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check, got %d: %+v", len(checks), checks)
+	}
+	if checks[0].Status != "WARN" {
+		t.Errorf("expected WARN for duplicate ports, got %+v", checks[0])
+	}
+	if !strings.Contains(checks[0].Detail, "8080") || !strings.Contains(checks[0].Detail, "web") {
+		t.Errorf("expected detail to mention the port and task names, got %q", checks[0].Detail)
+	}
+}
+
+// ── checkTaskRequires ────────────────────────────────────────────────────
+
+func TestCheckTaskRequires_AllSatisfied(t *testing.T) {
+	m := &config.Manifest{Tasks: map[string]config.Task{
+		"web": {Name: "web", Run: "echo web", Requires: []string{"sh"}},
+	}}
+	checks := checkTaskRequires(m)
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check, got %d: %+v", len(checks), checks)
+	}
+	if checks[0].Status != "PASS" {
+		t.Errorf("expected PASS for a binary on PATH, got %+v", checks[0])
+	}
+}
+
+func TestCheckTaskRequires_Missing(t *testing.T) {
+	m := &config.Manifest{Tasks: map[string]config.Task{
+		"web": {Name: "web", Run: "echo web", Requires: []string{"definitely-not-a-real-binary-xyz"}},
+	}}
+	checks := checkTaskRequires(m)
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check, got %d: %+v", len(checks), checks)
+	}
+	if checks[0].Status != "FAIL" {
+		t.Errorf("expected FAIL for a missing binary, got %+v", checks[0])
+	}
+	if !strings.Contains(checks[0].Detail, "web") || !strings.Contains(checks[0].Detail, "definitely-not-a-real-binary-xyz") {
+		t.Errorf("expected detail to mention the task and binary name, got %q", checks[0].Detail)
+	}
+}
+
+func TestCheckTaskRequires_NoRequires(t *testing.T) {
+	m := &config.Manifest{Tasks: map[string]config.Task{
+		"web": {Name: "web", Run: "echo web"},
+	}}
+	checks := checkTaskRequires(m)
+	if len(checks) != 0 {
+		t.Errorf("expected no checks when no task declares requires:, got %+v", checks)
+	}
+}
+
+// ── checkTools ───────────────────────────────────────────────────────────
+
+func TestCheckTools_NoToolsReturnsNil(t *testing.T) {
+	m := &config.Manifest{}
+	checks := checkTools(context.Background(), m, false)
+	if checks != nil {
+		t.Errorf("expected nil checks when manifest declares no tools, got %+v", checks)
+	}
+}
+
+// ── checkDevcontainerCLI ─────────────────────────────────────────────────
+
+func TestCheckDevcontainerCLI_ReturnsPassOrWarn(t *testing.T) {
+	check := checkDevcontainerCLI()
+	if check.Name != "devcontainer CLI" {
+		t.Errorf("expected check name 'devcontainer CLI', got %q", check.Name)
+	}
+	if check.Status != "PASS" && check.Status != "WARN" {
+		t.Errorf("expected PASS or WARN, got %q", check.Status)
+	}
+}
+
+// ── checkAI ──────────────────────────────────────────────────────────────
+
+func TestCheckAI_NotConfigured(t *testing.T) {
+	chdirTemp(t)
+	checks := checkAI()
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check when no .devx/ai.yaml exists, got %+v", checks)
+	}
+	if checks[0].Status != "WARN" {
+		t.Errorf("expected WARN when AI is not configured, got %+v", checks[0])
+	}
+	if !strings.Contains(checks[0].Detail, "not configured") {
+		t.Errorf("expected detail to mention 'not configured', got %q", checks[0].Detail)
+	}
+}
+
+func TestCheckAI_MalformedConfig(t *testing.T) {
+	chdirTemp(t)
+	if err := os.MkdirAll(".devx", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".devx/ai.yaml", []byte("not: [valid: yaml"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	checks := checkAI()
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check for malformed config, got %+v", checks)
+	}
+	if checks[0].Status != "WARN" {
+		t.Errorf("expected WARN for malformed ai.yaml, got %+v", checks[0])
+	}
+}
+
+func TestCheckAI_ConfiguredNoProbe(t *testing.T) {
+	chdirTemp(t)
+	if err := os.MkdirAll(".devx", 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Provider other than "local"/"remote" skips the backend probe, and an
+	// unrecognized tool name skips the binary-on-PATH check — keeping this
+	// test hermetic (no real AI backend/tool required).
+	yaml := "provider: cloud\ntool: unknown-tool\nmodel: gpt-4\n"
+	if err := os.WriteFile(".devx/ai.yaml", []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	checks := checkAI()
+	if len(checks) != 1 {
+		t.Fatalf("expected 1 check (config only, no probe), got %+v", checks)
+	}
+	if checks[0].Status != "PASS" {
+		t.Errorf("expected PASS for a well-formed ai.yaml, got %+v", checks[0])
+	}
+	if !strings.Contains(checks[0].Detail, "cloud") || !strings.Contains(checks[0].Detail, "gpt-4") {
+		t.Errorf("expected detail to mention provider/model, got %q", checks[0].Detail)
+	}
+}
+
+func TestDetectAllRuntimes_ReturnsDockerAndPodman(t *testing.T) {
+	infos := detectAllRuntimes(context.Background())
+	if len(infos) != 2 {
+		t.Fatalf("expected 2 runtime infos, got %d", len(infos))
+	}
+	names := map[string]bool{}
+	for _, info := range infos {
+		names[info.Name] = true
+	}
+	if !names["docker"] || !names["podman"] {
+		t.Errorf("detectAllRuntimes() names = %+v, want docker and podman", names)
+	}
+}
+
+func TestDetectCompose_UnknownBinaryWarns(t *testing.T) {
+	check := detectCompose(context.Background(), "devx-definitely-not-a-real-binary")
+	if check.Status != "WARN" {
+		t.Errorf("detectCompose(missing binary) status = %q, want WARN", check.Status)
+	}
+	if !strings.Contains(check.Name, "devx-definitely-not-a-real-binary") {
+		t.Errorf("detectCompose() name = %q, want it to reference the runtime", check.Name)
+	}
+}
+
+func TestRun_WithoutManifest_ReturnsSortedChecks(t *testing.T) {
+	chdirTemp(t)
+	report := Run(context.Background(), Options{})
+	if len(report.Checks) == 0 {
+		t.Fatal("expected at least one check")
+	}
+	// CLI check should always be present and PASS.
+	foundCLI := false
+	for i := 1; i < len(report.Checks); i++ {
+		if report.Checks[i-1].Name > report.Checks[i].Name {
+			t.Fatalf("checks not sorted by name: %q came before %q", report.Checks[i-1].Name, report.Checks[i].Name)
+		}
+	}
+	for _, c := range report.Checks {
+		if c.Name == "CLI" {
+			foundCLI = true
+			if c.Status != "PASS" {
+				t.Errorf("CLI check status = %q, want PASS", c.Status)
+			}
+		}
+	}
+	if !foundCLI {
+		t.Error("expected a CLI check to be present")
+	}
+}
+
+func TestRun_WithManifest_IncludesPortAndRequiresChecks(t *testing.T) {
+	dir := chdirTemp(t)
+	manifestPath := dir + "/devx.yaml"
+	if err := os.WriteFile(manifestPath, []byte(`version: 1
+project:
+  name: test
+build: echo hello
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := config.Load(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report := Run(context.Background(), Options{Manifest: m})
+	foundPorts := false
+	for _, c := range report.Checks {
+		if c.Name == "Ports" {
+			foundPorts = true
+		}
+	}
+	if !foundPorts {
+		t.Error("expected a Ports check when a manifest is provided")
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 )
 
@@ -125,8 +124,7 @@ func readJSONC(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	re := regexp.MustCompile(`(?m)//[^\n]*`)
-	return re.ReplaceAll(data, nil), nil
+	return stripJSONComments(data), nil
 }
 
 // generateCIWorkflow returns a GitHub Actions workflow YAML for the given stack.

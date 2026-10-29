@@ -1,6 +1,7 @@
 # Build output
 /devx
 /devx.exe
+/dist/
 
-# Runtime directory — generated compose, telemetry configs, state, secrets
+# Runtime directory — setup state, task registry, AI config, logs
 .devx/

@@ -1,234 +1,50 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/dever-labs/devx/main/schemas/devx.schema.json
 version: 1
 
 project:
-  name: my-app
-  defaultProfile: local
+  name: devx
 
-registry:
-  prefix: ""  # e.g. myregistry.azurecr.io/my-app
-
-# ai configures the LLM used for:
-#   1. Automatic connection string injection (dep connect without explicit env mapping)
-#   2. devx export — generating production deployment artifacts (Compose, k8s, Helm, Terraform)
-#
-# Credentials are read from environment variables — never stored here:
-#   openai:       OPENAI_API_KEY
-#   anthropic:    ANTHROPIC_API_KEY
-#   azure-openai: AZURE_OPENAI_KEY
-#   ollama:       no key required (ensure ollama is running locally)
-ai:
-  provider: openai
-  model: gpt-4o-mini
-
-# ── tools ─────────────────────────────────────────────────────────────────────
-# Declare required SDKs, runtimes, and CLI tools.
-# Run `devx doctor` to check. Run `devx setup --fix` to install missing tools.
 tools:
-  - name: node
-    version: "20"
-    check: "node --version"
+  - name: go
+    version: "1.21"
+    check: "go version"
     install:
-      windows: "winget install OpenJS.NodeJS.LTS"
-      macos: "brew install node@20"
-      linux: "curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash - && apt-get install -y nodejs"
+      windows: "winget install GoLang.Go"
+      macos: "brew install go"
+      linux: "sudo apt-get install -y golang-go"
 
-  - name: dotnet
-    version: "8"
-    check: "dotnet --version"
+  - name: golangci-lint
+    check: "golangci-lint version"
     install:
-      windows: "winget install Microsoft.DotNet.SDK.8"
-      macos: "brew install dotnet@8"
-      linux: "wget https://dot.net/v1/dotnet-install.sh -O install.sh && bash install.sh --version 8.0"
+      windows: "winget install golangci-lint"
+      macos: "brew install golangci-lint"
+      linux: "curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin"
 
-# ── setup ─────────────────────────────────────────────────────────────────────
-# Host-side commands run in order by `devx setup`.
-# runOnce steps are skipped if their command hash hasn't changed since last run.
-setup:
-  - name: restore-frontend
-    run: "npm install"
-    workdir: ./frontend
-    runOnce: true
+build:
+  desc: Build the devx binary
+  run: go build ./cmd/devx
 
-  - name: restore-backend
-    run: "dotnet restore"
-    workdir: ./src
-    runOnce: true
+vet:
+  desc: Run go vet across all packages
+  run: go vet ./...
 
-  - name: generate-certs
-    run: "mkcert -install && mkcert localhost 127.0.0.1"
-    runOnce: true
-    platform: all
+lint:
+  desc: Run golangci-lint
+  run: golangci-lint run ./...
 
-profiles:
+test:
+  desc: Run unit tests with the race detector
+  deps: [vet]
+  run: go test ./... -race
 
-  # ── local ─────────────────────────────────────────────────────────────────
-  # Docker Compose, built from source. Run with: devx up
-  local:
-    runtime: compose  # default — can be omitted
-    services:
-      api:
-        build:
-          context: ./src/Api
-        ports:
-          - "8080:80"
-        env:
-          APP_ENV: development
-        dependsOn:
-          - db
-          - cache
-        # Connection env vars (DB_HOST, ConnectionStrings__Default, REDIS_URL etc.)
-        # are automatically injected by the dep connect blocks below.
+integration:
+  desc: Run the Docker-backed integration suite (requires Docker)
+  deps: [build]
+  run: >-
+    DEVX_BIN=$(pwd)/devx
+    go test ./tests/integration/... -tags integration -timeout 180s
 
-      worker:
-        build:
-          context: ./src/Worker
-        env:
-          APP_ENV: development
-        dependsOn:
-          - db
-
-    deps:
-      db:
-        kind: postgres
-        # source: devx-labs/postgres  # optional — defaults to devx-labs/<kind>
-        version: "16.1.0"             # provider for PostgreSQL 16, provider release 1.0
-        image: postgres:16            # optional — provider's defaultImage is used if omitted
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-        volume: "db-data:/var/lib/postgresql/data"
-        connect:
-          - service: api
-            # AI detects the right env var names by scanning ./src/Api.
-            # Override with an explicit env block if AI is not configured:
-            # env:
-            #   ConnectionStrings__DefaultConnection: "Host=${host};Port=${port};Database=${POSTGRES_DB};Username=postgres;Password=${POSTGRES_PASSWORD}"
-          - service: worker
-            env:
-              DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@${host}:${port}/${POSTGRES_DB}"
-
-      cache:
-        kind: redis
-        version: "7.2.0"             # provider for Redis 7, provider release 2.0
-        # image omitted — provider's defaultImage (redis:7) is used
-        ports:
-          - "6379:6379"
-        connect:
-          - service: api
-            env:
-              REDIS_URL: "redis://${host}:${port}"
-
-    hooks:
-      afterUp:
-        - run: "echo 'Dev environment ready'"
-
-  # ── ci ────────────────────────────────────────────────────────────────────
-  # Docker Compose, pre-built images. Run with: devx up --profile ci
-  ci:
-    runtime: compose
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:latest
-        env:
-          APP_ENV: test
-        dependsOn:
-          - db
-
-    deps:
-      db:
-        kind: postgres
-        version: "16.1.0"
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-        connect:
-          - service: api
-            env:
-              ConnectionStrings__DefaultConnection: "Host=${host};Port=${port};Database=${POSTGRES_DB};Username=postgres;Password=${POSTGRES_PASSWORD}"
-
-    hooks:
-      afterUp:
-        - exec: "migrate up"
-          service: api
-
-  # ── staging ───────────────────────────────────────────────────────────────
-  staging:
-    runtime: compose
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:stable
-        ports:
-          - "80:8080"
-        env:
-          APP_ENV: staging
-        dependsOn:
-          - db
-        health:
-          httpGet: http://localhost/health
-          interval: 10s
-          retries: 6
-
-    deps:
-      db:
-        kind: postgres
-        version: "16.1.0"
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: "${DB_PASSWORD}"
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-        volume: "staging-db-data:/var/lib/postgresql/data"
-        connect:
-          - service: api
-            env:
-              ConnectionStrings__DefaultConnection: "Host=${host};Port=${port};Database=${POSTGRES_DB};Username=postgres;Password=${POSTGRES_PASSWORD}"
-
-    hooks:
-      afterUp:
-        - exec: "migrate up"
-          service: api
-
-  # ── k8s ───────────────────────────────────────────────────────────────────
-  # Kubernetes via kubectl. Run with: devx up --profile k8s
-  k8s:
-    runtime: k8s
-    services:
-      api:
-        image: myregistry.azurecr.io/my-app/api:latest
-        ports:
-          - "80:8080"
-        env:
-          APP_ENV: production
-        dependsOn:
-          - db
-
-      worker:
-        image: myregistry.azurecr.io/my-app/worker:latest
-        env:
-          APP_ENV: production
-        dependsOn:
-          - db
-
-    deps:
-      db:
-        kind: postgres
-        version: "16.1.0"
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: appdb
-        ports:
-          - "5432:5432"
-        connect:
-          - service: api
-            env:
-              ConnectionStrings__DefaultConnection: "Host=${host};Port=${port};Database=${POSTGRES_DB};Username=postgres;Password=${POSTGRES_PASSWORD}"
-          - service: worker
-            env:
-              DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@${host}:${port}/${POSTGRES_DB}"
+all:
+  desc: Everything CI runs — build, vet, lint, and race tests
+  deps: [build, vet, lint, test]
+  run: echo "all checks passed"
