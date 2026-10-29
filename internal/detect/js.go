@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // JSWorkspace describes a detected Node/JS package-manager setup.
@@ -21,6 +22,10 @@ type JSWorkspace struct {
 	// Packages holds the raw workspace globs (package.json "workspaces",
 	// or pnpm-workspace.yaml's "packages:"), informational only.
 	Packages []string
+	// ManagerVersion is the full Corepack "packageManager" spec (e.g.
+	// "yarn@4.1.0"), set only when Manager was inferred from that field
+	// rather than a lockfile. Empty otherwise.
+	ManagerVersion string
 }
 
 // packageJSON is the subset of package.json fields detection needs.
@@ -50,6 +55,9 @@ func JS(dir string) (*JSWorkspace, bool) {
 	}
 
 	ws := &JSWorkspace{Manager: detectManager(dir, pkg.PackageManager)}
+	if pkg.PackageManager != "" && strings.HasPrefix(pkg.PackageManager, ws.Manager+"@") {
+		ws.ManagerVersion = pkg.PackageManager
+	}
 
 	switch {
 	case len(pkg.Workspaces) > 0:
