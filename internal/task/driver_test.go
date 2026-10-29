@@ -32,13 +32,17 @@ func TestProcessDriver_StartWaitExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := h.Wait(context.Background()); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	waitErr := h.Wait(context.Background())
 
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log: %v", err)
+	data, readErr := os.ReadFile(logPath)
+	if waitErr != nil {
+		if readErr == nil {
+			t.Fatalf("Wait: %v (captured output: %q)", waitErr, data)
+		}
+		t.Fatalf("Wait: %v (also failed to read log: %v)", waitErr, readErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read log: %v", readErr)
 	}
 	if !strings.Contains(string(data), "hello-from-task") {
 		t.Errorf("expected log to contain task output, got %q", data)
