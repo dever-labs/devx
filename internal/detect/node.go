@@ -17,7 +17,13 @@ type nodeEngines struct {
 	} `json:"engines"`
 }
 
-var semverPrefix = regexp.MustCompile(`^[^0-9]*`)
+// versionNumber matches the first dotted version number in a string,
+// e.g. the "20.11.0" in both "^20.11.0" and the compound range
+// ">=20.11.0 <21.0.0". For a real range (rather than a single pin) this
+// picks the lower bound as a reasonable single-version approximation —
+// there's no single correct answer for a "version:" field that only
+// supports one value.
+var versionNumber = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
 // NodeVersion looks for an explicit Node version pin in dir, checking (in
 // priority order) .nvmrc, .node-version, then package.json's
@@ -47,7 +53,7 @@ func NodeVersion(dir string) (string, bool) {
 }
 
 func cleanVersion(v string) string {
-	return semverPrefix.ReplaceAllString(strings.TrimSpace(v), "")
+	return versionNumber.FindString(strings.TrimSpace(v))
 }
 
 // NodeVersionManager reports the first installed Node version manager

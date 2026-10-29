@@ -116,6 +116,11 @@ func TestCleanVersion(t *testing.T) {
 		"~20.11.0":  "20.11.0",
 		">=20.11.0": "20.11.0",
 		" 20.11.0 ": "20.11.0",
+		// Compound ranges: extract the lower-bound version rather than
+		// leaving trailing range syntax in the result.
+		">=20.11.0 <21.0.0":   "20.11.0",
+		"^20.11.0 || ^22.0.0": "20.11.0",
+		"20":                  "20",
 	}
 	for in, want := range cases {
 		if got := cleanVersion(in); got != want {
