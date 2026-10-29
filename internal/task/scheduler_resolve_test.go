@@ -73,7 +73,7 @@ test:
 }
 
 func TestScheduler_ProbeExisting_ContainerRunning(t *testing.T) {
-	dir := fakeRuntimeBin(t, "docker", "echo running\n")
+	dir := fakeRuntimeBin(t, "docker", withStdout("running"))
 	withFakePath(t, dir)
 
 	sched := newTestScheduler(t, `version: 1
@@ -92,7 +92,7 @@ build: echo hello
 }
 
 func TestScheduler_ProbeExisting_ContainerNotRunning(t *testing.T) {
-	dir := fakeRuntimeBin(t, "docker", "echo exited\n")
+	dir := fakeRuntimeBin(t, "docker", withStdout("exited"))
 	withFakePath(t, dir)
 
 	sched := newTestScheduler(t, `version: 1

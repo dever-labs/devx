@@ -101,7 +101,39 @@ web:
 	if err := sched.Up(ctx, nil); err != nil {
 		t.Fatalf("up failed: %v", err)
 	}
-	if _, ok := sched.State.Lookup("web"); !ok {
+	entry, ok := sched.State.Lookup("web")
+	if !ok {
 		t.Fatalf("expected state entry for 'web' after up")
 	}
+
+	// web is detached, so its process (and the goroutine that eventually
+	// closes its log file) outlives Up() by design — exactly like a real
+	// `devx up` invocation, which exits while the task keeps running.
+	// Left alone, that means the log file handle is still open when
+	// t.TempDir() tries to remove dir's contents during cleanup, which
+	// Windows (unlike POSIX) refuses to do. Kill the process tree and
+	// wait for it to actually exit before the test ends, so the log file
+	// is closed first. See issue #39.
+	if entry.PID > 0 {
+		t.Cleanup(func() {
+			killProcessTree(entry.PID)
+			waitForProcessExit(t, entry.PID, 5*time.Second)
+		})
+	}
+}
+
+// waitForProcessExit polls until pid is no longer alive or the deadline
+// passes, so callers can be sure a killed process (and anything it was
+// still holding open, like a log file) has fully gone away before
+// continuing — notably before t.TempDir() cleanup runs.
+func waitForProcessExit(t *testing.T, pid int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Logf("process %d still alive after %s", pid, timeout)
 }

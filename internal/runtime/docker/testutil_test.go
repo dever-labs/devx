@@ -2,34 +2,22 @@ package docker
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dever-labs/devx/internal/testexec"
 )
 
-// writeFakeBinary creates a shell script that records every argument it
-// receives (one per line) to the file named by $FAKE_ARGS_FILE, optionally
-// emits the contents of $FAKE_STDOUT_FILE to stdout, and exits with
-// $FAKE_EXIT_CODE (default 0). This lets tests fully control docker/compose
-// behavior without needing the real CLI installed, while still exercising
-// the actual exec.Command plumbing in Runtime's methods.
+// writeFakeBinary returns a cross-platform fake binary (see
+// internal/testexec) that records every argument it receives (one per
+// line) to the file named by $FAKE_ARGS_FILE, optionally emits the
+// contents of $FAKE_STDOUT_FILE to stdout, and exits with
+// $FAKE_EXIT_CODE (default 0). This lets tests fully control
+// docker/compose behavior without needing the real CLI installed, while
+// still exercising the actual exec.Command plumbing in Runtime's methods.
 func writeFakeBinary(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "fakebin")
-	script := `#!/bin/sh
-if [ -n "$FAKE_ARGS_FILE" ]; then
-  printf '%s\n' "$@" > "$FAKE_ARGS_FILE"
-fi
-if [ -n "$FAKE_STDOUT_FILE" ]; then
-  cat "$FAKE_STDOUT_FILE"
-fi
-exit "${FAKE_EXIT_CODE:-0}"
-`
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return testexec.NewFakeBin(t)
 }
 
 func readArgsFile(t *testing.T, path string) []string {
