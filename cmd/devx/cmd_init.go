@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/dever-labs/devx/internal/detect"
 )
 
 func runInit(args []string) error {
@@ -189,15 +191,69 @@ func writeInitManifest(projectName, stack string, withAI bool) error {
 		sb.WriteString("ai:\n  provider: local\n  local:\n    backend: auto\n")
 	}
 
+	var mgr string
+	if stack == "node" {
+		mgr = "npm"
+		var toolLines []string
+
+		if v, ok := detect.NodeVersion("."); ok {
+			var winCmd, macCmd, linCmd string
+			if m, ok := detect.NodeVersionManager(); ok {
+				cmd := detect.NodeInstallCommand(m, v)
+				winCmd, macCmd, linCmd = cmd, cmd, cmd
+				fmt.Fprintf(&sb, "\n# Detected node %s from the project and %s installed locally —\n# installs pin to this version through %s instead of the OS package manager.\n", v, m, m)
+			} else {
+				winCmd = "choco install nodejs --version=" + v
+				macCmd = "brew install node@" + v
+				linCmd = "sudo apt-get install -y nodejs=" + v + "*"
+				fmt.Fprintf(&sb, "\n# Detected node %s from the project. No nvm/fnm/volta found locally,\n# so install falls back to the OS package manager — install one of\n# those tools for version-manager-aware installs instead.\n", v)
+			}
+			toolLines = append(toolLines, fmt.Sprintf("  - name: node\n    version: %s\n    check: node --version\n    install:\n      windows: %s\n      macos: %s\n      linux: %s\n", v, winCmd, macCmd, linCmd))
+		}
+
+		ws, wsOK := detect.JS(".")
+		if wsOK {
+			mgr = ws.Manager
+			if ws.ManagerVersion != "" {
+				if cmd, ok := detect.CorepackInstallCommand(ws.ManagerVersion); ok {
+					toolLines = append(toolLines, fmt.Sprintf("  - name: %s\n    version: %s\n    check: %s --version\n    install:\n      windows: %s\n      macos: %s\n      linux: %s\n", mgr, ws.ManagerVersion, mgr, cmd, cmd, cmd))
+				}
+			}
+		}
+
+		if len(toolLines) > 0 {
+			sb.WriteString("tools:\n")
+			for _, l := range toolLines {
+				sb.WriteString(l)
+			}
+		}
+
+		if wsOK {
+			note := "single package"
+			if ws.IsWorkspace {
+				note = "workspace root"
+			}
+			fmt.Fprintf(&sb, "\n# Detected %s (%s) from package.json — installs once at the\n# workspace root instead of per-package setup: steps.\n", mgr, note)
+			fmt.Fprintf(&sb, "setup:\n  - name: install dependencies\n    run: %s\n    runOnce: true\n", ws.InstallCommand())
+		}
+	}
+
 	sb.WriteString("\n# Tasks runnable with: devx run <name> (or devx <name>)\n")
 	switch stack {
 	case "dotnet":
 		sb.WriteString("build:\n  desc: Build the solution\n  run: dotnet build\n\n")
 		sb.WriteString("test:\n  desc: Run all tests\n  run: dotnet test --logger \"console;verbosity=minimal\"\n")
 	case "node":
-		sb.WriteString("build:\n  desc: Build\n  run: npm run build\n\n")
-		sb.WriteString("test:\n  desc: Run tests\n  run: npm test\n\n")
-		sb.WriteString("dev:\n  desc: Start dev server\n  run: npm run dev\n")
+		runPrefix := mgr + " run" // "npm run <script>" / "pnpm run <script>"
+		if mgr == "yarn" {
+			runPrefix = "yarn" // yarn doesn't need the "run" subcommand for package.json scripts
+		}
+		// "test"/"start" are reserved lifecycle script names every
+		// manager runs directly without "run" (npm test, pnpm test,
+		// yarn test all work identically).
+		fmt.Fprintf(&sb, "build:\n  desc: Build\n  run: %s build\n\n", runPrefix)
+		fmt.Fprintf(&sb, "test:\n  desc: Run tests\n  run: %s test\n\n", mgr)
+		fmt.Fprintf(&sb, "dev:\n  desc: Start dev server\n  run: %s dev\n", runPrefix)
 	case "go":
 		sb.WriteString("build:\n  desc: Build all packages\n  run: go build ./...\n\n")
 		sb.WriteString("test:\n  desc: Run all tests\n  run: go test ./...\n")
@@ -254,4 +310,3 @@ func writeDevcontainer(stack string) error {
 
 	return os.WriteFile(".devcontainer/devcontainer.json", []byte(content), 0644)
 }
-
