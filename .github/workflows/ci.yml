@@ -16,7 +16,14 @@ jobs:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # node24
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # node24
         with:
-          go-version-file: go.mod
+          # Pinned to a specific minor (not go-version-file: go.mod, which
+          # would resolve to go.mod's conservative `go 1.21` floor): recent
+          # govulncheck releases require go>=1.26, and an old exact patch
+          # (e.g. 1.26.1) accumulates known, already-fixed stdlib CVEs that
+          # would otherwise make the govulncheck step below fail forever.
+          # check-latest keeps picking up the newest 1.26.x security patch.
+          go-version: "1.26"
+          check-latest: true
           cache: false
       - name: Vet
         run: go vet ./...
@@ -31,7 +38,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # node24
         with:
-          go-version-file: go.mod
+          go-version: "1.26"
+          check-latest: true
       - name: Build
         run: go build ./...
       - name: Unit tests
