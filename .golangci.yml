@@ -15,3 +15,7 @@ linters:
       # Ignore deliberate error discards in flag parsing (ExitOnError handles panics).
       - source: "fs\\.Parse"
         linters: [ errcheck ]
+
+formatters:
+  enable:
+    - gofmt # Fails if any file isn't gofmt-formatted (catches formatting drift CI previously missed)
