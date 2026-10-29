@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [0.1.4](https://github.com/dever-labs/devx/compare/v0.1.3...v0.1.4) (2026-10-29)
+
+
+### Features
+
+* envFiles: local config/secrets scaffolding block ([#43](https://github.com/dever-labs/devx/issues/43)) ([f87c2d0](https://github.com/dever-labs/devx/commit/f87c2d0fb675e091cc4c4232fcf91cec56bb80cf))
+* JS/TS package-manager + workspace auto-detection in devx init ([#41](https://github.com/dever-labs/devx/issues/41)) ([8371267](https://github.com/dever-labs/devx/commit/8371267c57a7d01c6e7df8bb9c09607ca13f7b3a))
+* Node version + Corepack version-manager-aware installs in devx init ([#44](https://github.com/dever-labs/devx/issues/44)) ([19a3bc5](https://github.com/dever-labs/devx/commit/19a3bc5ea6b9f5f4593e3e3fe2d47403a2598ee4))
+* VS Code attach-debugging launch.json + debugging docs ([#40](https://github.com/dever-labs/devx/issues/40)) ([b34b4d9](https://github.com/dever-labs/devx/commit/b34b4d9d1df43428d87affa9ac43d06d4ec0f825))
+
+
+### Bug Fixes
+
+* **ci:** enforce gofmt and reformat 7 drifted files ([#34](https://github.com/dever-labs/devx/issues/34)) ([4516b07](https://github.com/dever-labs/devx/commit/4516b07e91f0430bffa782fdc95c42fd4e588129))
+* **docs:** remove stale hand-written Unreleased changelog section ([#31](https://github.com/dever-labs/devx/issues/31)) ([00f8272](https://github.com/dever-labs/devx/commit/00f82726b35bd4cc3c0c2e229961d4eb3cc766be))
+* **security:** verify checksums.txt before devx update replaces the binary ([#35](https://github.com/dever-labs/devx/issues/35)) ([15bd377](https://github.com/dever-labs/devx/commit/15bd37714e1d8a086d7d15718e4f824af149d261))
+
 ## [0.1.3](https://github.com/dever-labs/devx/compare/v0.1.2...v0.1.3) (2026-10-29)
 
 
