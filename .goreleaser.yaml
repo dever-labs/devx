@@ -40,11 +40,12 @@ checksum:
 release:
   mode: keep-existing
 
-# Homebrew tap (macOS + Linux). goreleaser's classic `brews:` (Formula)
-# config is deprecated in v2 in favor of `homebrew_casks:`, which supports
-# plain CLI binaries via the `binary` stanza just as well.
+# Homebrew tap (macOS + Linux). goreleaser's classic `brews:` (Formula) config
+# is fully deprecated as of goreleaser v2.16 in favor of `homebrew_casks:`,
+# which is how Homebrew now expects pre-compiled binaries to be distributed.
 homebrew_casks:
   - name: devx
+    binaries: [devx]
     repository:
       owner: dever-labs
       name: homebrew-tap
@@ -55,3 +56,14 @@ homebrew_casks:
     commit_author:
       name: github-actions[bot]
       email: github-actions[bot]@users.noreply.github.com
+    # devx binaries aren't code-signed/notarized (no Apple Developer account),
+    # so macOS Gatekeeper quarantines the downloaded binary and running it
+    # fails with "devx is damaged and can't be opened" unless the quarantine
+    # bit is stripped on install. See:
+    # https://goreleaser.com/customization/publish/homebrew_casks/#signing-and-notarizing
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/devx"]
+          end
