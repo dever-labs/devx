@@ -46,6 +46,7 @@ dependencies with `devx run api`. See `devx help` for the full command list.
 | `ai` | object | Optional LLM provider config used by `devx ai`. See `docs/ai.md`-equivalent comments in `schemas/devx.schema.json`. Credentials always come from environment variables, never from `devx.yaml`. |
 | `tools` | list | Required CLI tools/SDKs, checked by `devx doctor`, installed by `devx setup`. |
 | `setup` | list | Ordered host-side commands run by `devx setup`. |
+| `envFiles` | list | Local config/secrets files scaffolded from a template by `devx setup` (see [Scaffolding local config/secrets](#scaffolding-local-configsecrets)). |
 | *(anything else)* | task | A task definition — see below. |
 
 ---
@@ -204,6 +205,52 @@ so pressing F5 connects to a devx-managed process:
 
 Other stacks (.NET, Python) aren't templated yet — `devx init` reports this and skips the
 file rather than guessing a wrong debug-adapter shape.
+
+---
+
+## Scaffolding local config/secrets
+
+```yaml
+envFiles:
+  - name: local app config
+    template: app-config.local.yaml.tmpl
+    output: app-config.local.yaml
+    vars:
+      - name: DB_PASSWORD
+        envVar: DB_PASSWORD      # checked first; defaults to the var's name
+        prompt: "Database password"
+        secret: true             # documentation only — see note below
+      - name: API_URL
+        default: "http://localhost:8080"
+```
+
+```
+# app-config.local.yaml.tmpl
+database:
+  password: {{.DB_PASSWORD}}
+api:
+  url: {{.API_URL}}
+```
+
+`devx setup` renders each `envFiles:` entry's `template:` (a Go
+[`text/template`](https://pkg.go.dev/text/template) file — placeholders are
+`{{.VAR_NAME}}`) to `output:`, resolving every declared var in priority order:
+
+1. an OS environment variable (`envVar:`, defaulting to the var's `name:`)
+2. an interactive terminal prompt (`prompt:`), when `devx setup` is running in a real
+   terminal — skipped entirely in `--json` mode, with `--no-prompt`, or when stdin isn't
+   a terminal (e.g. CI), so a missing value fails fast instead of hanging
+3. `default:`
+
+It's an error for a var to resolve from none of those. **`output:` is only ever created,
+never overwritten** — once the file exists, `devx setup` (even with `--fix`) reports that
+entry as `skipped` and leaves it untouched, so a developer's already-filled-in local
+secrets/config are never clobbered. Add `output:`'s path to `.gitignore` yourself; devx
+does not do this automatically since the path is project-defined.
+
+`secret: true` is documentation only — it doesn't log the resolved value, but terminal
+input typed at the `prompt:` is not hidden. For real secrets, prefer setting `envVar:`
+from your existing secrets manager (1Password CLI, Vault, etc.) rather than prompting.
 
 ---
 

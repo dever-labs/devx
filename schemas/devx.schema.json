@@ -102,6 +102,33 @@
           "platform": { "type": "string", "enum": ["all", "windows", "linux", "macos"], "default": "all" }
         }
       }
+    },
+    "envFiles": {
+      "type": "array",
+      "description": "Local config/secrets files to scaffold from a template on first 'devx setup'. Each is only ever created, never overwritten, once its output file exists.",
+      "items": {
+        "type": "object",
+        "required": ["template", "output"],
+        "properties": {
+          "name": { "type": "string", "description": "Shown in 'devx setup' output. Defaults to output." },
+          "template": { "type": "string", "description": "Path to a Go text/template file, relative to this devx.yaml. Vars are available as {{.VAR_NAME}}." },
+          "output": { "type": "string", "description": "Path the rendered template is written to, relative to this devx.yaml. Skipped if this file already exists." },
+          "vars": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string", "description": "Template placeholder name, e.g. \"DB_PASSWORD\" for {{.DB_PASSWORD}}." },
+                "envVar": { "type": "string", "description": "OS environment variable checked first. Defaults to name." },
+                "prompt": { "type": "string", "description": "Interactive prompt label. Defaults to name." },
+                "default": { "type": "string", "description": "Used when no env var is set and not running interactively (or the prompt is left blank)." },
+                "secret": { "type": "boolean", "description": "Documentation only — devx does not log this value, but terminal input is not hidden." }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "additionalProperties": {

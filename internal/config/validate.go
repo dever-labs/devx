@@ -117,6 +117,32 @@ func ValidateTools(m *Manifest) error {
 	return nil
 }
 
+// ValidateEnvFiles checks that all envFiles declarations are well-formed.
+func ValidateEnvFiles(m *Manifest) error {
+	var issues []string
+	for i, f := range m.EnvFiles {
+		label := f.Name
+		if label == "" {
+			label = fmt.Sprintf("envFiles[%d]", i)
+		}
+		if f.Template == "" {
+			issues = append(issues, fmt.Sprintf("%s: template is required", label))
+		}
+		if f.Output == "" {
+			issues = append(issues, fmt.Sprintf("%s: output is required", label))
+		}
+		for j, v := range f.Vars {
+			if v.Name == "" {
+				issues = append(issues, fmt.Sprintf("%s: vars[%d]: name is required", label, j))
+			}
+		}
+	}
+	if len(issues) > 0 {
+		return &ValidationError{Issues: issues}
+	}
+	return nil
+}
+
 // ValidateSetup checks that all setup step declarations are well-formed.
 func ValidateSetup(m *Manifest) error {
 	var issues []string

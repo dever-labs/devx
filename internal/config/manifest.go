@@ -17,6 +17,7 @@ var reservedTopLevelKeys = map[string]bool{
 	"ai":       true,
 	"tools":    true,
 	"setup":    true,
+	"envFiles": true,
 	"vars":     true,
 	"includes": true,
 	"agents":   true,
@@ -36,6 +37,10 @@ type Manifest struct {
 	// Setup declares ordered host-side commands to run after tool installation.
 	// Use `devx setup` to execute. RunOnce steps are skipped when unchanged.
 	Setup []SetupStep `yaml:"setup,omitempty"`
+	// EnvFiles declares local config/secrets files to scaffold from a
+	// template on first `devx setup`. Each is only ever created, never
+	// overwritten, once its Output file exists.
+	EnvFiles []EnvFile `yaml:"envFiles,omitempty"`
 	// Vars are plain textual ${VAR} substitution defaults, lowest-priority
 	// in the CLI override > inherited env > .env/.env.local > vars: chain.
 	Vars map[string]string `yaml:"vars,omitempty"`
@@ -173,6 +178,8 @@ func (m *Manifest) UnmarshalYAML(node *yaml.Node) error {
 			err = valNode.Decode(&m.Tools)
 		case "setup":
 			err = valNode.Decode(&m.Setup)
+		case "envFiles":
+			err = valNode.Decode(&m.EnvFiles)
 		case "vars":
 			err = valNode.Decode(&m.Vars)
 		case "includes":

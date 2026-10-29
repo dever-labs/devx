@@ -29,6 +29,13 @@ type Options struct {
 	// Stdout is where subprocess stdout is routed. Defaults to os.Stdout when nil.
 	// Set to os.Stderr in --json mode to keep JSON stdout clean.
 	Stdout io.Writer
+	// Interactive enables prompting on Stdin for envFiles vars with no
+	// matching environment variable set. Disable in non-interactive
+	// contexts (CI, --json) so missing values fail fast instead of
+	// blocking on a read that will never resolve.
+	Interactive bool
+	// Stdin is read from when prompting. Defaults to os.Stdin when nil.
+	Stdin io.Reader
 }
 
 // stepOut returns the effective stdout destination for subprocess output.
