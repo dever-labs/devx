@@ -23,8 +23,8 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 1. [Fork](https://github.com/dever-labs/devx/fork) the repository.
 2. Clone your fork:
    ```sh
-   git clone https://github.com/<your-username>/dever.git
-   cd dever
+   git clone https://github.com/<your-username>/devx.git
+   cd devx
    ```
 3. Add the upstream remote:
    ```sh
@@ -85,7 +85,10 @@ tests/integration/  — end-to-end tests (build tag: integration)
   git checkout -b feat/my-feature
   ```
 - Keep commits focused and atomic.
-- Follow existing code style (no external linter config — just match what's there).
+- Follow existing code style; CI runs `golangci-lint` with the repo's `.golangci.yml` config.
+- Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/)
+  (`feat:`, `fix:`, `chore:`, etc.) — releases are automated via release-please,
+  which derives version bumps and the changelog directly from these prefixes.
 - Add or update tests for any behaviour you change.
 - Update relevant docs under `docs/` if the change affects user-facing behaviour.
 
