@@ -244,6 +244,42 @@ func TestValidate_AIBlockValid(t *testing.T) {
 	}
 }
 
+func TestValidate_AIProviderRejectsUnknownValue(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+	}, AI: &AIConfig{Provider: "chatgpt", Model: "gpt-4"}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for an unsupported ai.provider value")
+	}
+}
+
+func TestValidate_AIProviderAcceptsLocal(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+	}, AI: &AIConfig{Provider: "local", Model: "llama3.2"}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no error for ai.provider: local, got %v", err)
+	}
+}
+
+func TestValidate_TaskOSRejectsUnknownValue(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", OS: []string{"solaris"}},
+	}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for an unsupported os: value")
+	}
+}
+
+func TestValidate_TaskOSAcceptsDocumentedValues(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", OS: []string{"linux", "darwin", "macos", "windows"}},
+	}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no error for documented os: values, got %v", err)
+	}
+}
+
 func TestValidate_RestartRequiresValidValue(t *testing.T) {
 	detached := true
 	m := &Manifest{Version: 1, Tasks: map[string]Task{

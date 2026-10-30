@@ -83,7 +83,7 @@ Environment is up
 | `devx exec <name> -- <cmd...>` | Run a command inside a running task's container |
 | `devx tasks [--json]` | Dump the full resolved task list |
 | `devx doctor [--fix] [--json]` | Health-check tools, `requires:`, and port collisions |
-| `devx validate [--file <path>]` | Validate `devx.yaml` |
+| `devx validate [--file <path>] [--json]` | Validate `devx.yaml` |
 | `devx clone <repo> [dir]` | Clone a repo and run `devx setup` |
 | `devx new <name> [--run <cmd>]` | Append a minimal task skeleton to `devx.yaml` |
 | `devx ai` / `devx ai chat`, `setup`, `status`, `reset` | AI setup wizard / one-off question / config |

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -10,16 +11,27 @@ import (
 	"github.com/dever-labs/devx/internal/task"
 )
 
+// validateResult is the --json output shape for 'devx validate'.
+type validateResult struct {
+	Valid  bool     `json:"valid"`
+	Issues []string `json:"issues"`
+}
+
 func runValidate(args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	file := fs.String("file", manifestFile, "Path to devx.yaml to validate")
+	outputJSON := fs.Bool("json", false, "Emit result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	manifest, err := config.Load(*file)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
+		if *outputJSON {
+			printValidateJSON([]string{fmt.Sprintf("parse error: %v", err)})
+		} else {
+			fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
+		}
 		return fmt.Errorf("validation failed")
 	}
 
@@ -40,9 +52,17 @@ func runValidate(args []string) error {
 	collect(config.ValidateSetup(manifest))
 	collect(config.ValidateEnvFiles(manifest))
 	issues = append(issues, extendedWarnings(manifest)...)
+	sort.Strings(issues)
+
+	if *outputJSON {
+		printValidateJSON(issues)
+		if len(issues) > 0 {
+			return fmt.Errorf("validation failed")
+		}
+		return nil
+	}
 
 	if len(issues) > 0 {
-		sort.Strings(issues)
 		fmt.Fprintf(os.Stderr, "devx.yaml has %d issue(s):\n", len(issues))
 		for _, issue := range issues {
 			fmt.Fprintf(os.Stderr, "  - %s\n", issue)
@@ -52,6 +72,18 @@ func runValidate(args []string) error {
 
 	fmt.Println("devx.yaml is valid ✓")
 	return nil
+}
+
+func printValidateJSON(issues []string) {
+	if issues == nil {
+		issues = []string{}
+	}
+	data, err := json.MarshalIndent(validateResult{Valid: len(issues) == 0, Issues: issues}, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error encoding JSON: %v\n", err)
+		return
+	}
+	fmt.Println(string(data))
 }
 
 // extendedWarnings covers the design doc's "Extended checks (all
