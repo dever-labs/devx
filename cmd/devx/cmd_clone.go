@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 func runClone(_ context.Context, args []string) error {
 	fs := flag.NewFlagSet("clone", flag.ExitOnError)
 	noSetup := fs.Bool("no-setup", false, "Skip running devx setup after cloning")
+	yes := fs.Bool("yes", false, "Run devx setup after cloning without prompting for confirmation")
 	_ = fs.Parse(args)
 
 	if fs.NArg() == 0 {
@@ -28,9 +30,11 @@ func runClone(_ context.Context, args []string) error {
 		dir = repoBaseName(repoURL)
 	}
 
-	// Clone.
+	// Clone. repoURL/dir are passed with a "--" separator so a value that
+	// starts with "-" (e.g. a crafted "--upload-pack=...") can never be
+	// parsed as a git flag instead of a positional argument.
 	fmt.Printf("Cloning %s into %s...\n", repoURL, dir)
-	cloneCmd := exec.Command("git", "clone", repoURL, dir)
+	cloneCmd := exec.Command("git", "clone", "--", repoURL, dir)
 	cloneCmd.Stdout = os.Stdout
 	cloneCmd.Stderr = os.Stderr
 	if err := cloneCmd.Run(); err != nil {
@@ -61,8 +65,26 @@ func runClone(_ context.Context, args []string) error {
 		return nil
 	}
 
+	// devx.yaml's setup steps and tool installers can run arbitrary shell
+	// commands. This repo was just cloned and hasn't been reviewed, so
+	// never run them silently: require an explicit --yes, or an
+	// interactive confirmation, before executing anything from it.
 	fmt.Println()
-	fmt.Println("Found devx.yaml — running setup...")
+	fmt.Println("Found devx.yaml — it can run arbitrary setup commands from this repo.")
+	if !*yes {
+		if !stdinIsTerminal() {
+			fmt.Println("Skipping setup (non-interactive; pass --yes to run it, or --no-setup to silence this message).")
+			return nil
+		}
+		reader := bufio.NewReader(os.Stdin)
+		confirmed, _ := promptYN(reader, "Run  devx setup  now?", false)
+		if !confirmed {
+			fmt.Println("Skipped. Run  devx setup  manually once you've reviewed devx.yaml.")
+			return nil
+		}
+	}
+
+	fmt.Println("Running setup...")
 	fmt.Println()
 	return runSetup(context.Background(), nil)
 }

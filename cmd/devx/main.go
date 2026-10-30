@@ -110,7 +110,7 @@ func printUsage() {
 	fmt.Println("  devx tasks [--json]                 dump the full resolved task list")
 	fmt.Println("  devx doctor [--fix] [--json]        health-check tools, requires:, and port collisions")
 	fmt.Println("  devx validate [--file path] [--json]")
-	fmt.Println("  devx clone <repo> [dir]             clone repo and run devx setup")
+	fmt.Println("  devx clone <repo> [dir]             clone repo, then prompt to run devx setup")
 	fmt.Println("  devx ai                             AI setup wizard or launch configured tool")
 	fmt.Println("  devx ai chat [question]            one-off AI question")
 	fmt.Println("  devx ai setup|status|reset")
