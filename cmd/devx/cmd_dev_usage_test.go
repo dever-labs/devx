@@ -18,10 +18,18 @@ func TestRequireDevcontainerCLI_MissingReturnsHelpfulError(t *testing.T) {
 }
 
 func TestDevcontainerID_NoneRunningReturnsError(t *testing.T) {
-	if _, err := devcontainerID(); err == nil {
+	_, err := devcontainerID()
+	if err == nil {
 		t.Skip("a devcontainer for this workspace is apparently running; nothing to verify")
-	} else if !strings.Contains(err.Error(), "no devcontainer running") {
-		t.Errorf("devcontainerID() error = %v, want mention of 'no devcontainer running'", err)
+	}
+	// Some CI runners (notably windows-latest) ship a 'docker' CLI with no
+	// reachable daemon — the docker ps call then fails with its own
+	// wrapped error instead of reaching the "no devcontainer running"
+	// branch. Both are valid shapes of "couldn't find a running
+	// devcontainer"; assert on either rather than coupling to a specific
+	// host's docker availability.
+	if !strings.Contains(err.Error(), "no devcontainer running") && !strings.Contains(err.Error(), "docker") {
+		t.Errorf("devcontainerID() error = %v, want mention of 'no devcontainer running' or a docker-related failure", err)
 	}
 }
 

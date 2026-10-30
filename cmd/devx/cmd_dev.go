@@ -487,7 +487,10 @@ func runDevPS() error {
 		"--format", `{{.Names}}\t{{.Status}}\t{{.Label "devcontainer.local_folder"}}`,
 	).Output()
 	if err != nil {
-		return fmt.Errorf("docker ps failed: %w", err)
+		// docker ps can fail because the daemon isn't running/reachable
+		// even though the CLI is on PATH. Surface that clearly rather than
+		// a bare "exit status 1".
+		return fmt.Errorf("docker ps failed (is the Docker daemon running?): %w", err)
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -556,7 +559,11 @@ func devcontainerID() (string, error) {
 		"--format", "{{.ID}}",
 	).Output()
 	if err != nil {
-		return "", fmt.Errorf("docker ps failed: %w", err)
+		// docker ps can fail for reasons other than "binary missing" (e.g.
+		// the daemon isn't running/reachable). Either way devx can't
+		// confirm a devcontainer is running, so report that consistently
+		// while still surfacing the underlying docker error for debugging.
+		return "", fmt.Errorf("no devcontainer running for %s (docker ps failed: %w)\n  Start it with: devx dev up", abs, err)
 	}
 	id := strings.TrimSpace(string(out))
 	if id == "" {

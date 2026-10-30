@@ -26,8 +26,14 @@ func TestRunDevLogs_NoContainerRunningErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no devcontainer is running")
 	}
-	if !strings.Contains(err.Error(), "no devcontainer running") {
-		t.Errorf("error = %q, want it to mention 'no devcontainer running'", err)
+	// Some CI runners (notably windows-latest) ship a 'docker' CLI with no
+	// reachable daemon — devcontainerID()'s docker ps call then fails with
+	// its own wrapped error instead of reaching the "no devcontainer
+	// running" branch. Both are valid shapes of "couldn't find a running
+	// devcontainer"; assert on either rather than coupling to a specific
+	// host's docker availability.
+	if !strings.Contains(err.Error(), "no devcontainer running") && !strings.Contains(err.Error(), "docker") {
+		t.Errorf("error = %q, want it to mention 'no devcontainer running' or a docker-related failure", err)
 	}
 }
 
