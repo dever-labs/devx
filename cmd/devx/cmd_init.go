@@ -2,8 +2,9 @@ package main
 
 import (
 	"bufio"
-	"flag"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,18 +12,51 @@ import (
 	"github.com/dever-labs/devx/internal/detect"
 )
 
-func runInit(args []string) error {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	_ = fs.Parse(args)
-
-	if fileExists(manifestFile) {
-		return fmt.Errorf("%s already exists — run 'devx ai reset' to reconfigure AI, or delete devx.yaml to start over", manifestFile)
+// runInit is the single entry point for both bootstrapping a new project
+// (the interactive wizard, when devx.yaml doesn't exist yet) and preparing
+// an existing one (tool checks, setup steps, envFiles — what used to be
+// the separate `devx setup` command). Folding "setup" into "init" means
+// there's one command to remember: `devx init` always leaves the project
+// ready to run, whether or not devx.yaml already existed.
+func runInit(ctx context.Context, args []string) error {
+	if !fileExists(manifestFile) {
+		// When --json is requested, the wizard's human-readable prompts/
+		// confirmations must not land on stdout — runProjectSetup's own
+		// --json output below is the only thing callers should parse there.
+		wizardOut := io.Writer(os.Stdout)
+		if hasJSONFlag(args) {
+			wizardOut = os.Stderr
+		}
+		prevPromptOutput := promptOutput
+		promptOutput = wizardOut
+		err := runInitWizard(wizardOut)
+		promptOutput = prevPromptOutput
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(wizardOut)
 	}
+	// --fix/--json/--no-prompt (if present in args) are parsed here, by
+	// the tool/setup-steps/envFiles execution that used to be `devx setup`.
+	return runProjectSetup(ctx, args)
+}
 
+// hasJSONFlag reports whether args requests --json output, without fully
+// parsing flags (runInitWizard runs before any FlagSet exists).
+func hasJSONFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--json" || a == "-json" {
+			return true
+		}
+	}
+	return false
+}
+
+func runInitWizard(out io.Writer) error {
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Println("devx init — set up this project")
-	fmt.Println()
+	fmt.Fprintln(out, "devx init — set up this project")
+	fmt.Fprintln(out)
 
 	// Project name — default to current directory name.
 	cwd, _ := os.Getwd()
@@ -31,7 +65,7 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// Stack selection.
 	stackIdx, err := promptChoice(reader, "Primary language / stack?",
@@ -47,41 +81,41 @@ func runInit(args []string) error {
 	}
 	stacks := []string{"dotnet", "node", "go", "python", "other"}
 	stack := stacks[stackIdx]
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// Devcontainer?
 	wantDevcontainer, err := promptYN(reader, "Set up a devcontainer?", true)
 	if err != nil {
 		return err
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// VS Code attach-debugging config?
 	wantLaunchJSON, err := promptYN(reader, "Generate .vscode/launch.json for attach-based debugging?", stack == "node" || stack == "go")
 	if err != nil {
 		return err
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// AI setup?
 	wantAI, err := promptYN(reader, "Add AI configuration (devx ai)?", true)
 	if err != nil {
 		return err
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// Write devx.yaml
 	if err := writeInitManifest(projectName, stack, wantAI); err != nil {
 		return err
 	}
-	fmt.Printf("✓  wrote %s\n", manifestFile)
+	fmt.Fprintf(out, "✓  wrote %s\n", manifestFile)
 
 	// Write .devcontainer/devcontainer.json
 	if wantDevcontainer {
 		if err := writeDevcontainer(stack); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not write devcontainer.json: %v\n", err)
 		} else {
-			fmt.Println("✓  wrote .devcontainer/devcontainer.json")
+			fmt.Fprintln(out, "✓  wrote .devcontainer/devcontainer.json")
 		}
 	}
 
@@ -92,9 +126,9 @@ func runInit(args []string) error {
 		case err != nil:
 			fmt.Fprintf(os.Stderr, "warning: could not write launch.json: %v\n", err)
 		case ok:
-			fmt.Println("✓  wrote .vscode/launch.json")
+			fmt.Fprintln(out, "✓  wrote .vscode/launch.json")
 		default:
-			fmt.Printf("ℹ  attach-debugging launch.json isn't templated for %q yet — skipped\n", stack)
+			fmt.Fprintf(out, "ℹ  attach-debugging launch.json isn't templated for %q yet — skipped\n", stack)
 		}
 	}
 
@@ -104,24 +138,24 @@ func runInit(args []string) error {
 	if err := ensureGitignore(); err != nil {
 		return err
 	}
-	fmt.Println("✓  updated .gitignore")
-	fmt.Println()
+	fmt.Fprintln(out, "✓  updated .gitignore")
+	fmt.Fprintln(out)
 
 	if wantAI {
-		fmt.Println("Run  devx ai  to configure your AI tool.")
+		fmt.Fprintln(out, "Run  devx ai  to configure your AI tool.")
 	}
 	if wantDevcontainer {
-		fmt.Println("Run  devx dev up  to start the devcontainer.")
+		fmt.Fprintln(out, "Run  devx dev up  to start the devcontainer.")
 	}
 	if wantLaunchJSON {
 		switch stack {
 		case "node":
-			fmt.Println("Add --inspect (or --inspect-brk) to a task's run: command, start it with devx up, then press F5 to attach.")
+			fmt.Fprintln(out, "Add --inspect (or --inspect-brk) to a task's run: command, start it with devx up, then press F5 to attach.")
 		case "go":
-			fmt.Println("Wrap a task's run: command with dlv exec --headless --listen=:2345 --api-version=2, start it with devx up, then press F5 to attach.")
+			fmt.Fprintln(out, "Wrap a task's run: command with dlv exec --headless --listen=:2345 --api-version=2, start it with devx up, then press F5 to attach.")
 		}
 	}
-	fmt.Println("Run  devx doctor  to verify your environment.")
+	fmt.Fprintln(out, "Checking tools and running setup now — re-run  devx init --fix  any time to repeat.")
 	return nil
 }
 

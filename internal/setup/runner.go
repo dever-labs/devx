@@ -1,5 +1,5 @@
 // Package setup implements tool checking/installation and host-side setup steps
-// for the `devx setup` and `devx doctor --fix` workflows.
+// for the `devx init` and `devx doctor --fix` workflows.
 package setup
 
 import (

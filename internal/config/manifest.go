@@ -32,13 +32,13 @@ type Manifest struct {
 	Project Project   `yaml:"project"`
 	AI      *AIConfig `yaml:"ai,omitempty"`
 	// Tools declares required SDKs, runtimes, and CLI tools for the project.
-	// Use `devx doctor` to check and `devx setup` (or `devx doctor --fix`) to install.
+	// Use `devx doctor` to check and `devx init` (or `devx doctor --fix`) to install.
 	Tools []Tool `yaml:"tools,omitempty"`
 	// Setup declares ordered host-side commands to run after tool installation.
-	// Use `devx setup` to execute. RunOnce steps are skipped when unchanged.
+	// Use `devx init` to execute. RunOnce steps are skipped when unchanged.
 	Setup []SetupStep `yaml:"setup,omitempty"`
 	// EnvFiles declares local config/secrets files to scaffold from a
-	// template on first `devx setup`. Each is only ever created, never
+	// template on first `devx init`. Each is only ever created, never
 	// overwritten, once its Output file exists.
 	EnvFiles []EnvFile `yaml:"envFiles,omitempty"`
 	// Vars are plain textual ${VAR} substitution defaults, lowest-priority

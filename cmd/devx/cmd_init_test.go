@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -357,13 +358,25 @@ func withStdin(t *testing.T, input string) {
 	}()
 }
 
-func TestRunInit_AlreadyExistsErrors(t *testing.T) {
+func TestRunInit_SkipsWizardWhenManifestExists(t *testing.T) {
 	dir := chdirTemp(t)
-	if err := os.WriteFile(filepath.Join(dir, manifestFile), []byte("version: 1\n"), 0644); err != nil {
+	manifest := "version: 1\nproject:\n  name: existing\n"
+	if err := os.WriteFile(filepath.Join(dir, manifestFile), []byte(manifest), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runInit(nil); err == nil {
-		t.Error("expected an error when devx.yaml already exists")
+
+	var initErr error
+	out := captureStdout(t, func() {
+		initErr = runInit(context.Background(), nil)
+	})
+	if initErr != nil {
+		t.Fatalf("runInit failed: %v", initErr)
+	}
+	if strings.Contains(out, "devx init — set up this project") {
+		t.Error("expected the interactive wizard to be skipped when devx.yaml already exists")
+	}
+	if !strings.Contains(out, "Nothing to do") {
+		t.Errorf("expected runInit to run project setup directly when devx.yaml already exists, got:\n%s", out)
 	}
 }
 
@@ -375,7 +388,7 @@ func TestRunInit_DefaultsWriteManifestAndDevcontainer(t *testing.T) {
 
 	var initErr error
 	_ = captureStdout(t, func() {
-		initErr = runInit(nil)
+		initErr = runInit(context.Background(), nil)
 	})
 	if initErr != nil {
 		t.Fatalf("runInit failed: %v", initErr)
@@ -406,7 +419,7 @@ func TestRunInit_DeclineDevcontainerAndAI(t *testing.T) {
 
 	var initErr error
 	_ = captureStdout(t, func() {
-		initErr = runInit(nil)
+		initErr = runInit(context.Background(), nil)
 	})
 	if initErr != nil {
 		t.Fatalf("runInit failed: %v", initErr)
@@ -436,7 +449,7 @@ func TestRunInit_AcceptsLaunchJSONForGoStack(t *testing.T) {
 
 	var initErr error
 	_ = captureStdout(t, func() {
-		initErr = runInit(nil)
+		initErr = runInit(context.Background(), nil)
 	})
 	if initErr != nil {
 		t.Fatalf("runInit failed: %v", initErr)

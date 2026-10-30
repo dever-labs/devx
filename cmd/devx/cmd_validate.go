@@ -127,9 +127,9 @@ func extendedWarnings(m *config.Manifest) []string {
 
 var builtinCommandNames = map[string]bool{
 	"up": true, "down": true, "run": true, "status": true, "logs": true,
-	"exec": true, "doctor": true, "setup": true, "validate": true, "tasks": true,
+	"exec": true, "doctor": true, "validate": true, "tasks": true,
 	"render": true, "lock": true, "providers": true, "export": true, "ai": true,
-	"dev": true, "clone": true, "update": true, "completion": true, "ci": true,
+	"dev": true, "update": true, "completion": true, "ci": true,
 	"env": true, "auth": true, "new": true, "init": true, "version": true, "help": true,
 	"workspace": true, "ps": true,
 }

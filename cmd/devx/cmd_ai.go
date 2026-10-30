@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -701,16 +702,22 @@ func runExternalCommand(name string, args ...string) error {
 
 // ── Prompt helpers ────────────────────────────────────────────────────────────────────────────
 
+// promptOutput is where prompt labels/questions are written. It defaults to
+// stdout but is temporarily swapped to stderr by runInit when --json is
+// requested and the wizard needs to run, so stdout stays reserved for the
+// final machine-readable result.
+var promptOutput io.Writer = os.Stdout
+
 func promptChoice(reader *bufio.Reader, label string, options []string, defaultIdx int) (int, error) {
-	fmt.Println(label)
+	fmt.Fprintln(promptOutput, label)
 	for i, o := range options {
 		marker := " "
 		if i == defaultIdx {
 			marker = "›"
 		}
-		fmt.Printf("  %s %d) %s\n", marker, i+1, o)
+		fmt.Fprintf(promptOutput, "  %s %d) %s\n", marker, i+1, o)
 	}
-	fmt.Printf("Choice [%d]: ", defaultIdx+1)
+	fmt.Fprintf(promptOutput, "Choice [%d]: ", defaultIdx+1)
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -718,7 +725,7 @@ func promptChoice(reader *bufio.Reader, label string, options []string, defaultI
 	}
 	n, err := strconv.Atoi(line)
 	if err != nil || n < 1 || n > len(options) {
-		fmt.Printf("  Invalid — using default (%d)\n", defaultIdx+1)
+		fmt.Fprintf(promptOutput, "  Invalid — using default (%d)\n", defaultIdx+1)
 		return defaultIdx, nil
 	}
 	return n - 1, nil
@@ -726,9 +733,9 @@ func promptChoice(reader *bufio.Reader, label string, options []string, defaultI
 
 func promptString(reader *bufio.Reader, label, defaultVal string) (string, error) {
 	if defaultVal != "" {
-		fmt.Printf("%s [%s]: ", label, defaultVal)
+		fmt.Fprintf(promptOutput, "%s [%s]: ", label, defaultVal)
 	} else {
-		fmt.Printf("%s: ", label)
+		fmt.Fprintf(promptOutput, "%s: ", label)
 	}
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
@@ -743,7 +750,7 @@ func promptYN(reader *bufio.Reader, label string, defaultYes bool) (bool, error)
 	if !defaultYes {
 		hint = "[y/N]"
 	}
-	fmt.Printf("%s %s ", label, hint)
+	fmt.Fprintf(promptOutput, "%s %s ", label, hint)
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(strings.ToLower(line))
 	if line == "" {

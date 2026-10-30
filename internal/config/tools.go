@@ -2,7 +2,7 @@ package config
 
 // Tool declares a required SDK, runtime, or CLI tool for the project.
 // devx doctor checks each tool using its Check command and reports missing tools.
-// devx setup (or devx doctor --fix) installs missing tools using the Install block.
+// devx init (or devx doctor --fix) installs missing tools using the Install block.
 type Tool struct {
 	Name    string  `yaml:"name"`
 	Version string  `yaml:"version,omitempty"` // informational, shown in doctor output
@@ -17,7 +17,7 @@ type Install struct {
 	Linux   string `yaml:"linux,omitempty"`
 }
 
-// SetupStep is a host-side command run as part of `devx setup`.
+// SetupStep is a host-side command run as part of `devx init`.
 // Steps run in declaration order. RunOnce steps are skipped if their
 // command hash matches a previous successful run stored in .devx/setup-state.json.
 type SetupStep struct {

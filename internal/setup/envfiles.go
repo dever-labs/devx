@@ -16,7 +16,7 @@ import (
 // manifest's own directory). A file whose Output already exists is left
 // untouched (status "skipped") — scaffolding only ever creates a file, so a
 // developer's already-filled-in local secrets/config are never clobbered by
-// a later `devx setup` run, even with --fix.
+// a later `devx init` run, even with --fix.
 func RunEnvFiles(dir string, files []config.EnvFile, opts Options) []Result {
 	var results []Result
 	for _, f := range files {
