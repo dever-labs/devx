@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [0.1.5](https://github.com/dever-labs/devx/compare/v0.1.4...v0.1.5) (2026-10-30)
+
+
+### Bug Fixes
+
+* handle docker present-but-unreachable CI flake; fix publish-features invalid tag ([#51](https://github.com/dever-labs/devx/issues/51)) ([237ac78](https://github.com/dever-labs/devx/commit/237ac7892c65801b814a39eb11130c03ff6967d5))
+* make test fixtures and env lookups Windows-compatible ([#45](https://github.com/dever-labs/devx/issues/45)) ([8044fb4](https://github.com/dever-labs/devx/commit/8044fb46a7498951660f648af7117cce28ba93f3))
+* toolchain, security, timeout, and validation gaps from repo review ([#47](https://github.com/dever-labs/devx/issues/47)) ([0b30403](https://github.com/dever-labs/devx/commit/0b30403d4426e09e7696ad08c2e1366f4c2d8798))
+
 ## [0.1.4](https://github.com/dever-labs/devx/compare/v0.1.3...v0.1.4) (2026-10-29)
 
 
