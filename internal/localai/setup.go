@@ -10,7 +10,14 @@ import (
 	"time"
 )
 
-var devcontainersScriptsBase = "https://raw.githubusercontent.com/dever-labs/devcontainers/main/scripts"
+// devcontainersScriptsBase points at a specific reviewed commit of
+// dever-labs/devcontainers rather than the mutable "main" branch. Raw
+// content for a fixed commit SHA is immutable, so this closes the "script
+// content can change at any time without devx's own version changing"
+// supply-chain gap that a branch reference would otherwise leave open.
+// Bump the SHA deliberately (after reviewing the diff) when scripts/ needs
+// to pick up upstream changes.
+var devcontainersScriptsBase = "https://raw.githubusercontent.com/dever-labs/devcontainers/54c8a0625aad8ee15956da71682f81b68aa6878a/scripts"
 
 // SetupOptions configures a local AI backend setup run.
 type SetupOptions struct {

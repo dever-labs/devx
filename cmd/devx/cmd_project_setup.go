@@ -10,8 +10,12 @@ import (
 	"github.com/dever-labs/devx/internal/setup"
 )
 
-func runSetup(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("setup", flag.ExitOnError)
+// runProjectSetup checks/installs required tools, runs any one-time setup
+// steps, and scaffolds env files declared in devx.yaml. It's the second
+// half of `devx init` — run directly whenever devx.yaml already existed,
+// or right after the interactive wizard finishes creating a new one.
+func runProjectSetup(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	fix := fs.Bool("fix", false, "Re-run runOnce steps and install missing tools")
 	outputJSON := fs.Bool("json", false, "Emit results as JSON")
 	noPrompt := fs.Bool("no-prompt", false, "Never prompt for envFiles values; fail fast if one can't be resolved from env/default")
@@ -83,7 +87,7 @@ func runSetup(ctx context.Context, args []string) error {
 
 	fmt.Println()
 	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "%d item(s) failed or missing — run 'devx setup --fix' to install\n", failed)
+		fmt.Fprintf(os.Stderr, "%d item(s) failed or missing — run 'devx init --fix' to install\n", failed)
 		return fmt.Errorf("setup incomplete")
 	}
 	fmt.Println("Dev environment is ready.")

@@ -27,7 +27,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "init":
-		err = runInit(args)
+		err = runInit(ctx, args)
 	case "up":
 		err = runUp(ctx, args)
 	case "down":
@@ -40,8 +40,6 @@ func main() {
 		err = runExec(ctx, args)
 	case "doctor":
 		err = runDoctor(ctx, args)
-	case "setup":
-		err = runSetup(ctx, args)
 	case "validate":
 		err = runValidate(args)
 	case "tasks":
@@ -60,8 +58,6 @@ func main() {
 		err = runDev(ctx, args)
 	case "run":
 		err = runRun(ctx, args)
-	case "clone":
-		err = runClone(ctx, args)
 	case "update":
 		err = runUpdate(ctx, args)
 	case "completion":
@@ -96,8 +92,7 @@ func main() {
 func printUsage() {
 	fmt.Println("devx - cross-platform dev task orchestrator")
 	fmt.Println("\nUsage:")
-	fmt.Println("  devx init                          interactive project scaffold (devx.yaml + devcontainer)")
-	fmt.Println("  devx setup [--fix] [--json]")
+	fmt.Println("  devx init [--fix] [--json]          interactive scaffold for a new project; always leaves it ready to run")
 	fmt.Println("  devx up [<name...>] [-d|--detach] [--dry-run] [--keep-going] [--group <name>]")
 	fmt.Println("                                      bring up the task graph (or a partial closure)")
 	fmt.Println("  devx run <name...> [--dry-run] [--watch]")
@@ -110,7 +105,6 @@ func printUsage() {
 	fmt.Println("  devx tasks [--json]                 dump the full resolved task list")
 	fmt.Println("  devx doctor [--fix] [--json]        health-check tools, requires:, and port collisions")
 	fmt.Println("  devx validate [--file path] [--json]")
-	fmt.Println("  devx clone <repo> [dir]             clone repo and run devx setup")
 	fmt.Println("  devx ai                             AI setup wizard or launch configured tool")
 	fmt.Println("  devx ai chat [question]            one-off AI question")
 	fmt.Println("  devx ai setup|status|reset")

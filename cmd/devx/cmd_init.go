@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"flag"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,14 +11,25 @@ import (
 	"github.com/dever-labs/devx/internal/detect"
 )
 
-func runInit(args []string) error {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	_ = fs.Parse(args)
-
-	if fileExists(manifestFile) {
-		return fmt.Errorf("%s already exists — run 'devx ai reset' to reconfigure AI, or delete devx.yaml to start over", manifestFile)
+// runInit is the single entry point for both bootstrapping a new project
+// (the interactive wizard, when devx.yaml doesn't exist yet) and preparing
+// an existing one (tool checks, setup steps, envFiles — what used to be
+// the separate `devx setup` command). Folding "setup" into "init" means
+// there's one command to remember: `devx init` always leaves the project
+// ready to run, whether or not devx.yaml already existed.
+func runInit(ctx context.Context, args []string) error {
+	if !fileExists(manifestFile) {
+		if err := runInitWizard(); err != nil {
+			return err
+		}
+		fmt.Println()
 	}
+	// --fix/--json/--no-prompt (if present in args) are parsed here, by
+	// the tool/setup-steps/envFiles execution that used to be `devx setup`.
+	return runProjectSetup(ctx, args)
+}
 
+func runInitWizard() error {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println("devx init — set up this project")
@@ -121,7 +132,7 @@ func runInit(args []string) error {
 			fmt.Println("Wrap a task's run: command with dlv exec --headless --listen=:2345 --api-version=2, start it with devx up, then press F5 to attach.")
 		}
 	}
-	fmt.Println("Run  devx doctor  to verify your environment.")
+	fmt.Println("Checking tools and running setup now — re-run  devx init --fix  any time to repeat.")
 	return nil
 }
 

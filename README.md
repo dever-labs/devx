@@ -72,8 +72,7 @@ Environment is up
 
 | Command | Description |
 |---|---|
-| `devx init` | Interactive scaffold: `devx.yaml` (+ optional devcontainer) |
-| `devx setup [--fix] [--json] [--no-prompt]` | Install required tools, run host-side setup steps, and scaffold `envFiles:` |
+| `devx init [--fix] [--json] [--no-prompt]` | Interactive scaffold for a new project (`devx.yaml` + optional devcontainer); always finishes by installing required tools, running host-side setup steps, and scaffolding `envFiles:` |
 | `devx up [<name...>] [-d\|--detach] [--dry-run] [--keep-going] [--group <name>]` | Bring up the task graph (or a partial closure) |
 | `devx run <name...> [--dry-run] [--watch]` | Run task(s) directly, respecting `deps:` |
 | `devx <name>` | Shorthand for `devx run <name>` |
@@ -84,7 +83,6 @@ Environment is up
 | `devx tasks [--json]` | Dump the full resolved task list |
 | `devx doctor [--fix] [--json]` | Health-check tools, `requires:`, and port collisions |
 | `devx validate [--file <path>] [--json]` | Validate `devx.yaml` |
-| `devx clone <repo> [dir]` | Clone a repo and run `devx setup` |
 | `devx new <name> [--run <cmd>]` | Append a minimal task skeleton to `devx.yaml` |
 | `devx ai` / `devx ai chat`, `setup`, `status`, `reset` | AI setup wizard / one-off question / config |
 | `devx dev` | Devcontainer status |
@@ -126,8 +124,8 @@ setup:
 ```sh
 devx doctor         # check runtime + declared tools
 devx doctor --fix   # install missing tools declared in tools:
-devx setup          # run pending setup: steps
-devx setup --fix    # also install missing tools + re-run runOnce steps
+devx init           # run pending setup: steps (re-runs the wizard only if devx.yaml is missing)
+devx init --fix     # also install missing tools + re-run runOnce steps
 ```
 
 ## devx.yaml reference

@@ -140,7 +140,7 @@ func checkTools(ctx context.Context, m *config.Manifest, fix bool) []Check {
 		case "missing":
 			hint := r.Detail
 			if hint == "" {
-				hint = "not found — run 'devx setup --fix' to install"
+				hint = "not found — run 'devx init --fix' to install"
 			}
 			checks = append(checks, Check{Name: label, Status: "FAIL", Detail: hint})
 		case "failed":

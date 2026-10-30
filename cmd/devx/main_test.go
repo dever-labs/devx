@@ -47,9 +47,9 @@ func TestPrintUsage(t *testing.T) {
 // warn when a task name would be shadowed by a built-in command.
 func TestBuiltinCommandNames_CoverMainDispatch(t *testing.T) {
 	dispatched := []string{
-		"init", "up", "down", "status", "logs", "exec", "doctor", "setup",
+		"init", "up", "down", "status", "logs", "exec", "doctor",
 		"validate", "tasks", "render", "lock", "providers", "export", "ai",
-		"dev", "run", "clone", "update", "completion", "ci", "env", "auth", "new",
+		"dev", "run", "update", "completion", "ci", "env", "auth", "new",
 	}
 	for _, cmd := range dispatched {
 		if !builtinCommandNames[cmd] {

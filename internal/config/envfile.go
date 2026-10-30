@@ -1,12 +1,12 @@
 package config
 
 // EnvFile declares a local config/secrets file to scaffold from a template
-// on first `devx setup`, so cloning a repo doesn't require manually
+// on first `devx init`, so cloning a repo doesn't require manually
 // copy-pasting values out of a secrets doc. If Output already exists it is
 // left untouched — scaffolding only ever creates the file, never
 // overwrites a developer's already-filled-in local values.
 type EnvFile struct {
-	// Name is a human-readable label shown in `devx setup` output.
+	// Name is a human-readable label shown in `devx init` output.
 	// Defaults to Output when empty.
 	Name string `yaml:"name,omitempty"`
 	// Template is a path (relative to this devx.yaml) to a Go

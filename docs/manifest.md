@@ -44,9 +44,9 @@ dependencies with `devx run api`. See `devx help` for the full command list.
 | `includes` | map | Merge another `devx.yaml`'s tasks into this graph (see [Includes](#includes)). |
 | `agents` | map | Named shell commands for the planned `devx workspace` feature (parallel per-branch workspaces with an AI coding agent auto-started on creation). Reserved and parsed today; not yet wired to a CLI command — see `docs/design/task-executor-refactor.md`. |
 | `ai` | object | Optional LLM provider config used by `devx ai`. See `docs/ai.md`-equivalent comments in `schemas/devx.schema.json`. Credentials always come from environment variables, never from `devx.yaml`. |
-| `tools` | list | Required CLI tools/SDKs, checked by `devx doctor`, installed by `devx setup`. |
-| `setup` | list | Ordered host-side commands run by `devx setup`. |
-| `envFiles` | list | Local config/secrets files scaffolded from a template by `devx setup` (see [Scaffolding local config/secrets](#scaffolding-local-configsecrets)). |
+| `tools` | list | Required CLI tools/SDKs, checked by `devx doctor`, installed by `devx init`. |
+| `setup` | list | Ordered host-side commands run by `devx init`. |
+| `envFiles` | list | Local config/secrets files scaffolded from a template by `devx init` (see [Scaffolding local config/secrets](#scaffolding-local-configsecrets)). |
 | *(anything else)* | task | A task definition — see below. |
 
 ---
@@ -159,9 +159,9 @@ setup:
 ```
 
 `devx doctor` checks every `tools:` entry's `check:` command and reports missing tools;
-`devx setup` (or `devx doctor --fix`) runs each tool's `install:` command for the current
+`devx init` (or `devx doctor --fix`) runs each tool's `install:` command for the current
 OS, then runs `setup:` steps in order. A `runOnce: true` step is skipped on a later
-`devx setup` if its `run:` command's content hasn't changed since the last successful run.
+`devx init` if its `run:` command's content hasn't changed since the last successful run.
 
 `devx init` auto-detects a JS/TS package manager and workspace layout from an existing
 `package.json` (`packageManager` field, lockfile, or `workspaces`/`pnpm-workspace.yaml`) and
@@ -232,18 +232,18 @@ api:
   url: {{.API_URL}}
 ```
 
-`devx setup` renders each `envFiles:` entry's `template:` (a Go
+`devx init` renders each `envFiles:` entry's `template:` (a Go
 [`text/template`](https://pkg.go.dev/text/template) file — placeholders are
 `{{.VAR_NAME}}`) to `output:`, resolving every declared var in priority order:
 
 1. an OS environment variable (`envVar:`, defaulting to the var's `name:`)
-2. an interactive terminal prompt (`prompt:`), when `devx setup` is running in a real
+2. an interactive terminal prompt (`prompt:`), when `devx init` is running in a real
    terminal — skipped entirely in `--json` mode, with `--no-prompt`, or when stdin isn't
    a terminal (e.g. CI), so a missing value fails fast instead of hanging
 3. `default:`
 
 It's an error for a var to resolve from none of those. **`output:` is only ever created,
-never overwritten** — once the file exists, `devx setup` (even with `--fix`) reports that
+never overwritten** — once the file exists, `devx init` (even with `--fix`) reports that
 entry as `skipped` and leaves it untouched, so a developer's already-filled-in local
 secrets/config are never clobbered. Add `output:`'s path to `.gitignore` yourself; devx
 does not do this automatically since the path is project-defined.
@@ -272,9 +272,8 @@ from your existing secrets manager (1Password CLI, Vault, etc.) rather than prom
 | `devx tasks` / `devx tasks --json` | List every task with its description and inferred mode. |
 | `devx validate` | Check `devx.yaml` for structural errors and common mistakes (see below). |
 | `devx doctor` / `devx doctor --fix` | Check (and optionally install) `tools:`, and flag port collisions / missing `requires:` binaries. |
-| `devx setup` | Run `setup:` steps. |
+| `devx init` | Interactive scaffold for a new project; also runs `setup:` steps (installs tools, runs host-side setup, scaffolds `envFiles:`). |
 | `devx new <name>` | Append a new task skeleton to `devx.yaml`. |
-| `devx init` | Scaffold a starter `devx.yaml`. |
 
 `devx validate` additionally warns (and exits non-zero) on:
 - A task name colliding with a built-in command name (`devx <name>` would always run the
