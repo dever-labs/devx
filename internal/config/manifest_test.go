@@ -262,6 +262,20 @@ func TestValidate_AIProviderAcceptsLocal(t *testing.T) {
 	}
 }
 
+// 'devx ai setup's wizard writes "remote" and "copilot" into the YAML
+// snippet it suggests pasting into devx.yaml (see cmd/devx/cmd_ai.go's
+// wizardRemote/wizardCloud + printYAMLSnippet) — both must validate.
+func TestValidate_AIProviderAcceptsRemoteAndCopilot(t *testing.T) {
+	for _, provider := range []string{"remote", "copilot"} {
+		m := &Manifest{Version: 1, Tasks: map[string]Task{
+			"a": {Name: "a", Run: "echo a"},
+		}, AI: &AIConfig{Provider: provider, Model: "some-model"}}
+		if err := Validate(m); err != nil {
+			t.Errorf("expected no error for ai.provider: %s, got %v", provider, err)
+		}
+	}
+}
+
 func TestValidate_TaskOSRejectsUnknownValue(t *testing.T) {
 	m := &Manifest{Version: 1, Tasks: map[string]Task{
 		"a": {Name: "a", Run: "echo a", OS: []string{"solaris"}},

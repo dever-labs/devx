@@ -38,8 +38,8 @@
       "properties": {
         "provider": {
           "type": "string",
-          "enum": ["openai", "anthropic", "ollama", "azure-openai", "local"],
-          "description": "LLM provider. Credentials: openai=OPENAI_API_KEY, anthropic=ANTHROPIC_API_KEY, azure-openai=AZURE_OPENAI_KEY, ollama/local=no key required."
+          "enum": ["openai", "anthropic", "ollama", "azure-openai", "local", "remote", "copilot"],
+          "description": "LLM provider. Credentials: openai=OPENAI_API_KEY, anthropic=ANTHROPIC_API_KEY, azure-openai=AZURE_OPENAI_KEY, ollama/local/remote=no key required, copilot=gh auth login."
         },
         "model": {
           "type": "string",

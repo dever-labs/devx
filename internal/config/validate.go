@@ -26,11 +26,17 @@ var validScopes = map[string]bool{"": true, "workspace": true, "shared": true}
 var validRestarts = map[string]bool{"": true, "never": true, "on-failure": true, "always": true}
 var validTaskOS = map[string]bool{"linux": true, "darwin": true, "macos": true, "windows": true}
 
-// validAIProviders mirrors the provider values devx actually understands:
-// the four remote/local-server backends internal/ai.New dispatches on, plus
-// "local" which the 'devx ai' wizard writes out for its on-device backend
-// (see internal/localai — a separate config path from internal/ai.New).
-var validAIProviders = map[string]bool{"openai": true, "anthropic": true, "azure-openai": true, "ollama": true, "local": true}
+// validAIProviders mirrors every provider value devx actually writes or
+// understands for the manifest's ai.provider field: the credential-based
+// remote providers (openai, anthropic, azure-openai, ollama) plus the
+// values 'devx ai setup's wizard itself writes into the YAML snippet it
+// suggests pasting into devx.yaml — local (on-device inference), remote
+// (a team-shared inference endpoint), and copilot (gh copilot passthrough)
+// — see cmd/devx/cmd_ai.go's wizardRemote/wizardCloud and printYAMLSnippet.
+var validAIProviders = map[string]bool{
+	"openai": true, "anthropic": true, "azure-openai": true, "ollama": true,
+	"local": true, "remote": true, "copilot": true,
+}
 
 // Validate checks the merged Manifest (after Load has resolved includes:)
 // for structural problems: unknown deps, cycles are caught separately by
@@ -48,7 +54,7 @@ func Validate(m *Manifest) error {
 		if m.AI.Provider == "" {
 			issues = append(issues, "ai.provider is required when ai block is present")
 		} else if !validAIProviders[m.AI.Provider] {
-			issues = append(issues, fmt.Sprintf("ai.provider %q is not supported — must be one of: openai, anthropic, azure-openai, ollama, local", m.AI.Provider))
+			issues = append(issues, fmt.Sprintf("ai.provider %q is not supported — must be one of: openai, anthropic, azure-openai, ollama, local, remote, copilot", m.AI.Provider))
 		}
 		if m.AI.Model == "" {
 			issues = append(issues, "ai.model is required when ai block is present")
