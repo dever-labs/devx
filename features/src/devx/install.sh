@@ -45,10 +45,38 @@ fi
 
 ASSET="${BINARY}-${PLATFORM}"
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 
 echo "Downloading devx ${VERSION} for ${PLATFORM}..."
 TMP="$(mktemp)"
 curl -fsSL "$URL" -o "$TMP"
+
+# Verify against the release's published checksums.txt so a tampered/MITM'd
+# download is caught before the binary is installed and executed.
+CHECKSUMS_TMP="$(mktemp)"
+if ! curl -fsSL "$CHECKSUMS_URL" -o "$CHECKSUMS_TMP"; then
+  echo "Failed to download checksums.txt for verification; aborting." >&2
+  exit 1
+fi
+EXPECTED="$(grep " ${ASSET}\$" "$CHECKSUMS_TMP" | awk '{print $1}')"
+rm -f "$CHECKSUMS_TMP"
+if [ -z "$EXPECTED" ]; then
+  echo "No checksum entry found for ${ASSET}; aborting." >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL="$(sha256sum "$TMP" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL="$(shasum -a 256 "$TMP" | awk '{print $1}')"
+else
+  echo "Neither sha256sum nor shasum is available; cannot verify checksum, aborting." >&2
+  exit 1
+fi
+if [ "$EXPECTED" != "$ACTUAL" ]; then
+  echo "Checksum mismatch for ${ASSET}: expected ${EXPECTED}, got ${ACTUAL}" >&2
+  exit 1
+fi
+
 chmod +x "$TMP"
 mv "$TMP" "${INSTALL_DIR}/${BINARY}"
 

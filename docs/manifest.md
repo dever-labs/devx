@@ -86,7 +86,7 @@ worker:
 | `containerName` | string | Overrides the container name devx infers from `run:`, used by `devx down`/`logs`/`exec`/`status` to address the right container. Set explicitly if the name can't be parsed automatically. |
 | `requires` | list | Binaries that must be on `PATH` for this task to run — checked by `devx doctor`. |
 | `sources` / `generates` | list of globs | Skip re-running a one-shot task when every `generates:` file is newer than every `sources:` file (like a Makefile rule). `generates:` is invalid on a detached task. |
-| `os` | list | Restrict this task to `linux`/`darwin`/`windows`; skipped (not an error) on any other OS. |
+| `os` | list | Restrict this task to `linux`/`darwin`/`windows` (`macos` accepted as an alias for `darwin`); skipped (not an error) on any other OS. |
 | `timeout` | duration string | Kill the task and treat it as failed if it runs longer than this (e.g. `"30s"`, `"2m"`). |
 | `stopTimeout` | duration string | How long `devx down` waits after `SIGTERM` before `SIGKILL`. Defaults to `10s`. |
 | `restart` | `never` \| `on-failure` \| `always` | Only meaningful on a detached task. Defaults to `never`. **Reserved for a later phase**: devx validates and persists this field today, but does not yet watch a detached task's process/container for exit and restart it — a crashed task simply stays dead regardless of `restart:`. |

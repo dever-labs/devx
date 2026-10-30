@@ -244,6 +244,56 @@ func TestValidate_AIBlockValid(t *testing.T) {
 	}
 }
 
+func TestValidate_AIProviderRejectsUnknownValue(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+	}, AI: &AIConfig{Provider: "chatgpt", Model: "gpt-4"}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for an unsupported ai.provider value")
+	}
+}
+
+func TestValidate_AIProviderAcceptsLocal(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+	}, AI: &AIConfig{Provider: "local", Model: "llama3.2"}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no error for ai.provider: local, got %v", err)
+	}
+}
+
+// 'devx ai setup's wizard writes "remote" and "copilot" into the YAML
+// snippet it suggests pasting into devx.yaml (see cmd/devx/cmd_ai.go's
+// wizardRemote/wizardCloud + printYAMLSnippet) — both must validate.
+func TestValidate_AIProviderAcceptsRemoteAndCopilot(t *testing.T) {
+	for _, provider := range []string{"remote", "copilot"} {
+		m := &Manifest{Version: 1, Tasks: map[string]Task{
+			"a": {Name: "a", Run: "echo a"},
+		}, AI: &AIConfig{Provider: provider, Model: "some-model"}}
+		if err := Validate(m); err != nil {
+			t.Errorf("expected no error for ai.provider: %s, got %v", provider, err)
+		}
+	}
+}
+
+func TestValidate_TaskOSRejectsUnknownValue(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", OS: []string{"solaris"}},
+	}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for an unsupported os: value")
+	}
+}
+
+func TestValidate_TaskOSAcceptsDocumentedValues(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", OS: []string{"linux", "darwin", "macos", "windows"}},
+	}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no error for documented os: values, got %v", err)
+	}
+}
+
 func TestValidate_RestartRequiresValidValue(t *testing.T) {
 	detached := true
 	m := &Manifest{Version: 1, Tasks: map[string]Task{

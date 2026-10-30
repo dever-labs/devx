@@ -272,6 +272,23 @@ func (s *Scheduler) runOne(ctx context.Context, name string, backgroundDetached 
 	s.handles[name] = handle
 	s.mu.Unlock()
 
+	// processDriver's underlying exec.Cmd deliberately isn't bound to
+	// timeoutCtx the way container commands are (a detached task's own
+	// process must be able to outlive this single runOne call), so a
+	// timeout alone never kills it -- only stops devx from waiting on it.
+	// started tracks whether the task reached a state where its process
+	// is meant to keep running independently of this call (a
+	// successfully-readied detached task); if we return before that
+	// (timeout, readiness failure, one-shot failure), proactively stop
+	// the process so a failed/timed-out start doesn't leak an orphaned,
+	// untracked process. See docs/manifest.md's `timeout:` contract.
+	started := false
+	defer func() {
+		if !started {
+			_ = handle.Stop(context.Background(), stopTimeoutFor(et))
+		}
+	}()
+
 	if et.Detached {
 		if err := WaitReady(timeoutCtx, et.ResolvedReady, et.ResolvedDir); err != nil {
 			return fmt.Errorf("task %q: %w", name, err)
@@ -284,6 +301,7 @@ func (s *Scheduler) runOne(ctx context.Context, name string, backgroundDetached 
 			PID:           handle.PID(),
 		})
 		s.emit(name, "ready")
+		started = true
 		if !backgroundDetached {
 			return handle.Wait(ctx)
 		}
@@ -295,8 +313,21 @@ func (s *Scheduler) runOne(ctx context.Context, name string, backgroundDetached 
 	if err != nil {
 		return fmt.Errorf("task %q failed: %w", name, err)
 	}
+	started = true
 	s.emit(name, "done")
 	return nil
+}
+
+// stopTimeoutFor returns how long to wait after SIGTERM/docker-stop before
+// forcing a kill, parsing the task's own stopTimeout override (falling
+// back to a conservative default when unset or unparsable).
+func stopTimeoutFor(et *EffectiveTask) time.Duration {
+	if et.StopTimeout != "" {
+		if d, err := time.ParseDuration(et.StopTimeout); err == nil {
+			return d
+		}
+	}
+	return 10 * time.Second
 }
 
 func (s *Scheduler) probeExisting(ctx context.Context, et *EffectiveTask, existing StateEntry) bool {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -84,6 +85,52 @@ func TestExtendedWarnings_NoWarningsForCleanManifest(t *testing.T) {
 	m := mustLoad(t, validManifest)
 	if warnings := extendedWarnings(m); len(warnings) != 0 {
 		t.Errorf("expected no warnings, got %v", warnings)
+	}
+}
+
+func TestRunValidate_JSON_ValidManifest(t *testing.T) {
+	writeManifest(t, validManifest)
+	var validateErr error
+	out := captureStdout(t, func() {
+		validateErr = runValidate([]string{"--json"})
+	})
+	if validateErr != nil {
+		t.Fatalf("runValidate --json: %v", validateErr)
+	}
+	var result struct {
+		Valid  bool     `json:"valid"`
+		Issues []string `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("runValidate --json produced invalid JSON: %v\noutput: %s", err, out)
+	}
+	if !result.Valid || len(result.Issues) != 0 {
+		t.Errorf("expected valid=true with no issues, got %+v", result)
+	}
+}
+
+func TestRunValidate_JSON_InvalidManifest(t *testing.T) {
+	writeManifest(t, `version: 1
+project:
+  name: my-app
+api: {}
+`)
+	var validateErr error
+	out := captureStdout(t, func() {
+		validateErr = runValidate([]string{"--json"})
+	})
+	if validateErr == nil {
+		t.Fatal("expected error for task missing run:")
+	}
+	var result struct {
+		Valid  bool     `json:"valid"`
+		Issues []string `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("runValidate --json produced invalid JSON: %v\noutput: %s", err, out)
+	}
+	if result.Valid || len(result.Issues) == 0 {
+		t.Errorf("expected valid=false with issues, got %+v", result)
 	}
 }
 
