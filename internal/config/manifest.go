@@ -65,16 +65,17 @@ type Project struct {
 	Name string `yaml:"name"`
 }
 
-// AIConfig holds optional AI provider settings used by 'devx ai',
-// automatic connection string detection, and local inference setup.
-// Credentials are read from environment variables:
+// AIConfig holds optional AI provider settings used by 'devx ai' and local
+// inference setup. Credentials are read from environment variables:
 //
 //	openai:       OPENAI_API_KEY
 //	anthropic:    ANTHROPIC_API_KEY
 //	azure-openai: AZURE_OPENAI_KEY
-//	ollama/local: no auth required
+//	ollama/local/remote/copilot: no API key stored in devx.yaml (copilot
+//	              uses 'gh auth login'; local/remote point at an
+//	              on-device or team-shared inference endpoint)
 type AIConfig struct {
-	Provider string         `yaml:"provider"` // openai | anthropic | ollama | azure-openai | local
+	Provider string         `yaml:"provider"` // openai | anthropic | ollama | azure-openai | local | remote | copilot
 	Model    string         `yaml:"model"`
 	BaseURL  string         `yaml:"baseURL,omitempty"` // override endpoint
 	Local    *LocalAIConfig `yaml:"local,omitempty"`

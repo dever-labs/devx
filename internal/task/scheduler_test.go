@@ -136,3 +136,53 @@ web:
 		})
 	}
 }
+
+// TestScheduler_TimeoutKillsTheProcess guards against a regression where a
+// task's `timeout:` stopped devx from *waiting* on a runaway process but
+// never actually killed it, leaving it running as an orphan contrary to
+// docs/manifest.md's "Kill the task ... if it runs longer than this".
+func TestScheduler_TimeoutKillsTheProcess(t *testing.T) {
+	dir := t.TempDir()
+	path := writeManifest(t, dir, `version: 1
+project:
+  name: test
+slow:
+  run: sleep 30
+  shell: sh
+  timeout: 200ms
+`)
+	m, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sched, err := NewScheduler(m, Options{LogDir: filepath.Join(dir, ".devx", "logs")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sched.Run(ctx, []string{"slow"}); err == nil {
+		t.Fatal("expected the timeout to fail the task")
+	}
+
+	sched.mu.Lock()
+	h, ok := sched.handles["slow"]
+	sched.mu.Unlock()
+	if !ok {
+		t.Fatalf("expected a handle to have been recorded for 'slow'")
+	}
+	pid := h.PID()
+	if pid <= 0 {
+		t.Fatalf("expected a valid PID, got %d", pid)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("process %d is still alive after timeout; it should have been killed", pid)
+}

@@ -38,8 +38,8 @@
       "properties": {
         "provider": {
           "type": "string",
-          "enum": ["openai", "anthropic", "ollama", "azure-openai"],
-          "description": "LLM provider. Credentials: openai=OPENAI_API_KEY, anthropic=ANTHROPIC_API_KEY, azure-openai=AZURE_OPENAI_KEY, ollama=no key required."
+          "enum": ["openai", "anthropic", "ollama", "azure-openai", "local", "remote", "copilot"],
+          "description": "LLM provider. Credentials: openai=OPENAI_API_KEY, anthropic=ANTHROPIC_API_KEY, azure-openai=AZURE_OPENAI_KEY, ollama/local/remote=no key required, copilot=gh auth login."
         },
         "model": {
           "type": "string",
@@ -183,7 +183,7 @@
           },
           "os": {
             "type": "array",
-            "items": { "type": "string", "enum": ["linux", "darwin", "windows"] },
+            "items": { "type": "string", "enum": ["linux", "darwin", "macos", "windows"] },
             "description": "Restricts this task to the listed OSes; skipped (not an error) on any other OS."
           },
           "timeout": { "type": "string", "description": "Duration string (e.g. \"30s\", \"2m\") after which devx kills the task and treats it as failed." },

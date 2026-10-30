@@ -24,6 +24,19 @@ func joinIssues(issues []string) string {
 
 var validScopes = map[string]bool{"": true, "workspace": true, "shared": true}
 var validRestarts = map[string]bool{"": true, "never": true, "on-failure": true, "always": true}
+var validTaskOS = map[string]bool{"linux": true, "darwin": true, "macos": true, "windows": true}
+
+// validAIProviders mirrors every provider value devx actually writes or
+// understands for the manifest's ai.provider field: the credential-based
+// remote providers (openai, anthropic, azure-openai, ollama) plus the
+// values 'devx ai setup's wizard itself writes into the YAML snippet it
+// suggests pasting into devx.yaml — local (on-device inference), remote
+// (a team-shared inference endpoint), and copilot (gh copilot passthrough)
+// — see cmd/devx/cmd_ai.go's wizardRemote/wizardCloud and printYAMLSnippet.
+var validAIProviders = map[string]bool{
+	"openai": true, "anthropic": true, "azure-openai": true, "ollama": true,
+	"local": true, "remote": true, "copilot": true,
+}
 
 // Validate checks the merged Manifest (after Load has resolved includes:)
 // for structural problems: unknown deps, cycles are caught separately by
@@ -40,6 +53,8 @@ func Validate(m *Manifest) error {
 	if m.AI != nil {
 		if m.AI.Provider == "" {
 			issues = append(issues, "ai.provider is required when ai block is present")
+		} else if !validAIProviders[m.AI.Provider] {
+			issues = append(issues, fmt.Sprintf("ai.provider %q is not supported — must be one of: openai, anthropic, azure-openai, ollama, local, remote, copilot", m.AI.Provider))
 		}
 		if m.AI.Model == "" {
 			issues = append(issues, "ai.model is required when ai block is present")
@@ -90,6 +105,12 @@ func validateTask(m *Manifest, name string, t Task) []string {
 	if t.Scope == "shared" {
 		if strings.Contains(t.Run, "${workspace}") || strings.Contains(t.Run, "${port}") {
 			issues = append(issues, fmt.Sprintf("task %q: scope: shared tasks cannot reference ${workspace}/${port} — a shared resource resolving differently per workspace defeats the point of sharing it", name))
+		}
+	}
+
+	for _, osName := range t.OS {
+		if !validTaskOS[osName] {
+			issues = append(issues, fmt.Sprintf("task %q: os %q is not supported — must be one of: linux, darwin, macos, windows", name, osName))
 		}
 	}
 
