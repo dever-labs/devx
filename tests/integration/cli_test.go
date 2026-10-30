@@ -4,6 +4,8 @@ package integration_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -58,7 +60,7 @@ func TestHelp(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d", code)
 	}
-	for _, want := range []string{"Usage:", "devx setup", "devx validate", "devx doctor"} {
+	for _, want := range []string{"Usage:", "devx init", "devx validate", "devx doctor"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("help output missing %q", want)
 		}
@@ -175,12 +177,12 @@ setup:
 }
 
 // ---------------------------------------------------------------------------
-// setup
+// init (project setup half — devx.yaml already exists)
 // ---------------------------------------------------------------------------
 
-func TestSetup_NoToolsOrSteps_JSON(t *testing.T) {
+func TestInit_NoToolsOrSteps_JSON(t *testing.T) {
 	dir := withManifest(t, validManifest)
-	stdout, _, code := run(t, dir, "setup", "--json")
+	stdout, _, code := run(t, dir, "init", "--json")
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d", code)
 	}
@@ -193,10 +195,10 @@ func TestSetup_NoToolsOrSteps_JSON(t *testing.T) {
 	}
 }
 
-func TestSetup_ToolPresent_JSON(t *testing.T) {
+func TestInit_ToolPresent_JSON(t *testing.T) {
 	// 'go' is always available in the CI environment and on dev machines.
 	dir := withManifest(t, manifestWithTools)
-	stdout, _, code := run(t, dir, "setup", "--json")
+	stdout, _, code := run(t, dir, "init", "--json")
 	if code != 0 {
 		t.Fatalf("expected exit 0 when tool is present, got %d", code)
 	}
@@ -215,9 +217,9 @@ func TestSetup_ToolPresent_JSON(t *testing.T) {
 	}
 }
 
-func TestSetup_StepRuns_JSON(t *testing.T) {
+func TestInit_StepRuns_JSON(t *testing.T) {
 	dir := withManifest(t, manifestWithSetup)
-	stdout, _, code := run(t, dir, "setup", "--json")
+	stdout, _, code := run(t, dir, "init", "--json")
 	if code != 0 {
 		t.Fatalf("expected exit 0 when step succeeds, got %d", code)
 	}
@@ -237,10 +239,26 @@ func TestSetup_StepRuns_JSON(t *testing.T) {
 	}
 }
 
-func TestSetup_NoManifest(t *testing.T) {
-	_, _, code := run(t, t.TempDir(), "setup", "--json")
-	if code == 0 {
-		t.Fatal("expected non-zero exit when devx.yaml is missing")
+// TestInit_NoManifest_RunsWizardWithDefaults covers the merged behavior:
+// `devx init` no longer requires an existing devx.yaml. With no manifest
+// and no interactive stdin (as in this subprocess), the wizard falls back
+// to every default (dotnet stack, devcontainer+AI yes), writes a fresh
+// devx.yaml, then proceeds to run project setup on it — exiting 0, not
+// erroring like the old standalone `devx setup` did.
+func TestInit_NoManifest_RunsWizardWithDefaults(t *testing.T) {
+	dir := t.TempDir()
+	stdout, _, code := run(t, dir, "init", "--json")
+	if code != 0 {
+		t.Fatalf("expected exit 0 (wizard defaults + no tools/setup declared), got %d; stdout=%q", code, stdout)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "devx.yaml")); err != nil {
+		t.Errorf("expected devx.yaml to be written by the wizard: %v", err)
+	}
+	// The wizard's human-readable prompts/confirmations must go to stderr
+	// when --json is requested, so stdout stays a single clean JSON value.
+	var results []map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &results); err != nil {
+		t.Fatalf("expected stdout to be valid JSON (wizard noise must not leak to stdout), got %q: %v", stdout, err)
 	}
 }
 
