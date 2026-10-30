@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -458,5 +459,90 @@ func TestRunInit_AcceptsLaunchJSONForGoStack(t *testing.T) {
 	ljPath := filepath.Join(dir, ".vscode", "launch.json")
 	if _, err := os.Stat(ljPath); err != nil {
 		t.Errorf("expected .vscode/launch.json to be written: %v", err)
+	}
+}
+
+func TestHasJSONFlag(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{}, false},
+		{[]string{"--fix"}, false},
+		{[]string{"--json"}, true},
+		{[]string{"-json"}, true},
+		{[]string{"--fix", "--json"}, true},
+		{[]string{"json"}, false}, // bare word, not a flag
+	}
+	for _, tc := range cases {
+		if got := hasJSONFlag(tc.args); got != tc.want {
+			t.Errorf("hasJSONFlag(%v) = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
+// TestRunInit_JSONFlagKeepsWizardOutputOffStdout guards the --json purity
+// fix: when devx.yaml doesn't exist and --json is requested, the wizard's
+// prompts must be routed to stderr (not stdout) so stdout stays a single
+// clean JSON value for callers to parse, and promptOutput must be restored
+// to stdout afterward for any later, non-JSON prompting in the same process.
+func TestRunInit_JSONFlagKeepsWizardOutputOffStdout(t *testing.T) {
+	chdirTemp(t)
+	withStdin(t, "\n\n\n\n\n") // accept every wizard default
+
+	var initErr error
+	out := captureStdout(t, func() {
+		initErr = runInit(context.Background(), []string{"--json"})
+	})
+	if initErr != nil {
+		t.Fatalf("runInit failed: %v", initErr)
+	}
+	var results []map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &results); err != nil {
+		t.Fatalf("expected stdout to be valid JSON (wizard noise must not leak to stdout), got %q: %v", out, err)
+	}
+	if promptOutput != io.Writer(os.Stdout) {
+		t.Error("expected promptOutput to be restored to os.Stdout after runInit returns")
+	}
+}
+
+// TestRunInit_ExistingManifestForwardsJSONFlag confirms --json still
+// produces clean JSON stdout when devx.yaml already exists (wizard skipped
+// entirely), exercising the other half of the merged init/setup flow.
+func TestRunInit_ExistingManifestForwardsJSONFlag(t *testing.T) {
+	writeManifest(t, validManifest)
+
+	var initErr error
+	out := captureStdout(t, func() {
+		initErr = runInit(context.Background(), []string{"--json"})
+	})
+	if initErr != nil {
+		t.Fatalf("runInit failed: %v", initErr)
+	}
+	var results []map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &results); err != nil {
+		t.Fatalf("expected valid JSON array, got %q: %v", out, err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for manifest with no tools/setup, got %d", len(results))
+	}
+}
+
+// TestRunInit_PropagatesProjectSetupFailure confirms runInit surfaces
+// errors from the project-setup half (not just the wizard half) when
+// devx.yaml already exists.
+func TestRunInit_PropagatesProjectSetupFailure(t *testing.T) {
+	writeManifest(t, `version: 1
+project:
+  name: my-app
+api:
+  run: "echo hi"
+tools:
+  - name: definitely-missing-tool
+    check: "exit 1"
+`)
+	if err := runInit(context.Background(), nil); err == nil {
+		t.Error("expected runInit to propagate a failed/missing tool as an error")
 	}
 }
