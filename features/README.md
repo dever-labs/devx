@@ -36,3 +36,11 @@ Features are packaged and pushed to `ghcr.io/dever-labs/devx/<feature-id>` by
 `main`. Bump the `version` in `features/src/devx/devcontainer-feature.json`
 (semver) to publish a new Feature version — the publish action skips versions
 that are already published.
+
+**Keep this version independent of devx's own release version.** Per the
+[Features distribution spec](https://containers.dev/implementors/features-distribution/),
+each Feature is versioned on its own — bump it only when `features/src/devx/`
+itself changes (install.sh, options, metadata), not on every devx CLI release.
+Coupling the two (e.g. via release-please `extra-files`) forces a pointless
+republish on every unrelated devx release and was tried and reverted once
+already.
