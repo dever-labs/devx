@@ -22,7 +22,6 @@ jobs:
     permissions:
       packages: write
       contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # node24
 
@@ -36,12 +35,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Publishing as ghcr.io/dever-labs/devx (single segment) is what we want, but the
+      # devcontainers CLI then also tries to push collection metadata to ghcr.io/dever-labs
+      # which GHCR rejects (NAME_INVALID). The Feature itself is pushed first, so that
+      # error is tolerated and the next step verifies the Feature really is published.
       - name: Publish Features
+        continue-on-error: true
         uses: devcontainers/action@bef2cf2d1a019b00b45e184f83035e01bd1972f3 # v1.4.4
         with:
           publish-features: "true"
           base-path-to-features: "./features/src"
           features-namespace: "dever-labs"
-          generate-docs: "true"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published Feature
+        run: |
+          v=$(jq -r .version features/src/devx/devcontainer-feature.json)
+          docker buildx imagetools inspect "ghcr.io/dever-labs/devx:${v}" > /dev/null
