@@ -100,11 +100,37 @@ func TestContainerDriver_Start_DetectsPodmanRuntime(t *testing.T) {
 func TestContainerDriver_Start_MissingContainerNameErrors(t *testing.T) {
 	d := NewContainerDriver()
 	et := newEffectiveTask("t", "true", ".")
+	et.Detached = true
 	// ContainerName left empty.
 
 	_, err := d.Start(context.Background(), et, filepath.Join(t.TempDir(), "task.log"))
 	if err == nil {
-		t.Fatal("expected an error when ContainerName can't be determined")
+		t.Fatal("expected an error when a detached container's ContainerName can't be determined")
+	}
+}
+
+// TestContainerDriver_Start_OneShotMissingContainerNameSucceeds is a
+// regression test for issue #58 (reopened after the v0.1.6 release):
+// devx validate's one-shot-container exception wasn't mirrored in
+// driver.go, so `devx up` still hard-failed at run time for a one-shot
+// container task (no -d/--detach) whose name couldn't be parsed, even
+// though the task itself ran to completion successfully and nothing
+// ever needs to Stop()/exec into it afterward.
+func TestContainerDriver_Start_OneShotMissingContainerNameSucceeds(t *testing.T) {
+	d := NewContainerDriver()
+	et := newEffectiveTask("t", "true", ".")
+	// Detached left false (the default); ContainerName left empty.
+
+	h, err := d.Start(context.Background(), et, filepath.Join(t.TempDir(), "task.log"))
+	if err != nil {
+		t.Fatalf("Start: expected a one-shot container with no parseable name to succeed, got: %v", err)
+	}
+	ch, ok := h.(*containerHandle)
+	if !ok {
+		t.Fatalf("expected *containerHandle, got %T", h)
+	}
+	if ch.name != "" {
+		t.Errorf("containerHandle.name = %q, want empty", ch.name)
 	}
 }
 
