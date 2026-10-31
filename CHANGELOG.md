@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.0.0](https://github.com/dever-labs/devx/compare/v0.1.7...v1.0.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* **ci:** log in to GHCR before publishing features (403 bearer token) ([#67](https://github.com/dever-labs/devx/issues/67)) ([7db6c56](https://github.com/dever-labs/devx/commit/7db6c56324118192869cd8affcd4adf9d28eb3ea))
+
+
+### Continuous Integration
+
+* Feature shares the devx version via release-please ([#70](https://github.com/dever-labs/devx/issues/70)) ([7740ad7](https://github.com/dever-labs/devx/commit/7740ad715ade88e5151bd0ebb5a97dc372904da2))
+
 ## [0.1.7](https://github.com/dever-labs/devx/compare/v0.1.6...v0.1.7) (2026-10-31)
 
 
