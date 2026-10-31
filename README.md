@@ -42,7 +42,7 @@ brew install --cask devx
 **Dev Containers**
 ```json
 "features": {
-    "ghcr.io/dever-labs/devx/devx:1": {}
+    "ghcr.io/dever-labs/features/devx:1": {}
 }
 ```
 

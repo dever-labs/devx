@@ -107,7 +107,7 @@ an install step, via the `devx` [Feature](https://containers.dev/implementors/fe
 
 ```json
 "features": {
-    "ghcr.io/dever-labs/devx/devx:1": {}
+    "ghcr.io/dever-labs/features/devx:1": {}
 }
 ```
 
@@ -115,7 +115,7 @@ Pin to a specific release instead of the latest one:
 
 ```json
 "features": {
-    "ghcr.io/dever-labs/devx/devx:1": {
+    "ghcr.io/dever-labs/features/devx:1": {
         "version": "v1.2.3"
     }
 }

@@ -1,9 +1,18 @@
 name: Publish devcontainer Features
 
 # Packages everything under features/src and publishes each Feature as an OCI
-# artifact to ghcr.io/dever-labs/devx/<feature-id> (see
+# artifact to ghcr.io/dever-labs/features/<feature-id> (see
 # https://containers.dev/implementors/features-distribution/). Also opens a PR
 # with auto-generated Feature docs.
+#
+# features-namespace is explicitly set to "dever-labs/features" (not the
+# devcontainers/action default of the full repo path "dever-labs/devx")
+# because this repo's name happens to equal its one Feature's id ("devx"),
+# which would otherwise publish to the confusing, duplicated
+# ghcr.io/dever-labs/devx/devx. A 2-segment namespace also keeps the CLI's
+# auto-generated devcontainer-collection.json push (always targets
+# <registry>/<namespace>, no id suffix) valid -- GHCR rejects single-segment
+# package names with NAME_INVALID.
 on:
   push:
     branches: [main]
@@ -42,5 +51,6 @@ jobs:
           publish-features: "true"
           base-path-to-features: "./features/src"
           generate-docs: "true"
+          features-namespace: "dever-labs/features"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
