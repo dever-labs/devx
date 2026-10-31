@@ -202,6 +202,53 @@ func TestValidate_UnknownDep(t *testing.T) {
 	}
 }
 
+// TestValidate_DefaultRejectsUnknownEntry is a regression test for issue
+// #55: every default: entry must resolve to either a known task name or
+// a group: value used by at least one task.
+func TestValidate_DefaultRejectsUnknownEntry(t *testing.T) {
+	m := &Manifest{Version: 1, Default: []string{"missing"}, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+	}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for a default: entry matching no task or group")
+	}
+}
+
+// TestValidate_DefaultAcceptsTaskNameAndGroup confirms default: entries
+// matching either a task name or a group: value are both accepted.
+func TestValidate_DefaultAcceptsTaskNameAndGroup(t *testing.T) {
+	m := &Manifest{Version: 1, Default: []string{"a", "backend"}, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a"},
+		"b": {Name: "b", Run: "echo b", Group: "backend"},
+	}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no validation error, got %v", err)
+	}
+}
+
+// TestValidate_ConflictsRejectsUnknownTask is a regression test for issue
+// #58: conflicts: must reference a known task name.
+func TestValidate_ConflictsRejectsUnknownTask(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", Conflicts: []string{"missing"}},
+	}}
+	if err := Validate(m); err == nil {
+		t.Fatal("expected validation error for conflicts: referencing an unknown task")
+	}
+}
+
+// TestValidate_ConflictsAcceptsKnownTask confirms a conflicts: entry
+// naming a real task is accepted.
+func TestValidate_ConflictsAcceptsKnownTask(t *testing.T) {
+	m := &Manifest{Version: 1, Tasks: map[string]Task{
+		"a": {Name: "a", Run: "echo a", Conflicts: []string{"b"}},
+		"b": {Name: "b", Run: "echo b"},
+	}}
+	if err := Validate(m); err != nil {
+		t.Fatalf("expected no validation error, got %v", err)
+	}
+}
+
 func TestValidate_WrongVersion(t *testing.T) {
 	m := &Manifest{Version: 2, Tasks: map[string]Task{
 		"a": {Name: "a", Run: "echo a"},

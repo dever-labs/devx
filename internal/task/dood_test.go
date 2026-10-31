@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/dever-labs/devx/internal/config"
 )
@@ -120,5 +121,71 @@ func TestCheckReadyContainerAware_CmdCheckSkipsFallback(t *testing.T) {
 	err := CheckReadyContainerAware(context.Background(), ready, ".", "docker", "api", 0)
 	if err == nil {
 		t.Fatal("expected the failing ready.cmd: to propagate")
+	}
+}
+
+// TestWaitReadyContainerAware_NilReadyReturnsImmediately confirms a task
+// with no ready: block never blocks or polls.
+func TestWaitReadyContainerAware_NilReadyReturnsImmediately(t *testing.T) {
+	err := WaitReadyContainerAware(context.Background(), nil, ".", "docker", "api", 0)
+	if err != nil {
+		t.Fatalf("expected nil ready: to return immediately with no error, got %v", err)
+	}
+}
+
+// TestWaitReadyContainerAware_SucceedsOnFirstCheck confirms the common
+// case: a check that's immediately ready returns without polling.
+func TestWaitReadyContainerAware_SucceedsOnFirstCheck(t *testing.T) {
+	ready := &config.ReadyCheck{Cmd: "true"}
+	err := WaitReadyContainerAware(context.Background(), ready, ".", "docker", "", 0)
+	if err != nil {
+		t.Fatalf("expected an immediately-successful ready.cmd: to succeed, got %v", err)
+	}
+}
+
+// TestWaitReadyContainerAware_FallsBackToContainerIP is the WaitReady
+// counterpart of TestCheckReadyContainerAware_FallsBackToContainerIP:
+// confirms the polling loop itself picks up a successful container-IP
+// fallback rather than only ever retrying the (unreachable) original
+// address.
+func TestWaitReadyContainerAware_FallsBackToContainerIP(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	containerPort := ln.Addr().(*net.TCPAddr).Port
+
+	ready := &config.ReadyCheck{TCP: "127.0.0.1:1"}
+
+	dir := fakeRuntimeBin(t, "docker", withStdout("127.0.0.1"))
+	withFakePath(t, dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := WaitReadyContainerAware(ctx, ready, ".", "docker", "api", containerPort); err != nil {
+		t.Fatalf("WaitReadyContainerAware should have fallen back to the container-IP:port and succeeded, got: %v", err)
+	}
+}
+
+// TestWaitReadyContainerAware_ContextCanceled confirms the polling loop
+// stops and returns the context error once ctx is canceled, instead of
+// looping forever against a check that never succeeds.
+func TestWaitReadyContainerAware_ContextCanceled(t *testing.T) {
+	ready := &config.ReadyCheck{TCP: "127.0.0.1:1"} // guaranteed-closed port
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err := WaitReadyContainerAware(ctx, ready, ".", "docker", "", 0)
+	if err == nil {
+		t.Fatal("expected an error once the context deadline is exceeded")
 	}
 }
