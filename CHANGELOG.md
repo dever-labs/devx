@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [0.1.7](https://github.com/dever-labs/devx/compare/v0.1.6...v0.1.7) (2026-10-31)
+
+
+### Bug Fixes
+
+* **task:** allow one-shot containers without a parseable name ([#65](https://github.com/dever-labs/devx/issues/65)) ([3a3245f](https://github.com/dever-labs/devx/commit/3a3245f6044885ddf7e6c0589e6fe8a2c80bef34)), closes [#58](https://github.com/dever-labs/devx/issues/58)
+
 ## [0.1.6](https://github.com/dever-labs/devx/compare/v0.1.5...v0.1.6) (2026-10-31)
 
 
