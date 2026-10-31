@@ -9,7 +9,7 @@
       "extra-files": [
         {
           "type": "json",
-          "path": "features/src/devx/devcontainer-feature.json",
+          "path": "features/src/cli/devcontainer-feature.json",
           "jsonpath": "$.version"
         }
       ]
