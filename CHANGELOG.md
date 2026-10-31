@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [0.1.6](https://github.com/dever-labs/devx/compare/v0.1.5...v0.1.6) (2026-10-31)
+
+
+### Bug Fixes
+
+* resolve migration-feedback issues [#55](https://github.com/dever-labs/devx/issues/55)-[#61](https://github.com/dever-labs/devx/issues/61) ([#62](https://github.com/dever-labs/devx/issues/62)) ([59cb6da](https://github.com/dever-labs/devx/commit/59cb6da5008a74def72ee8023c43f50a58451d51))
+
 ## [0.1.5](https://github.com/dever-labs/devx/compare/v0.1.4...v0.1.5) (2026-10-30)
 
 
