@@ -32,3 +32,11 @@ jobs:
           publish-features: "true"
           base-path-to-features: "./features/src"
           generate-docs: "true"
+        env:
+          # devcontainer features publish authenticates to ghcr.io by
+          # reading GITHUB_TOKEN directly from the environment — job-level
+          # `permissions: packages: write` alone does not inject it into
+          # this step (confirmed against devcontainers/feature-starter's
+          # reference release workflow, and by this repo's first 3
+          # publish attempts all failing with a 403 DENIED from ghcr.io).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
