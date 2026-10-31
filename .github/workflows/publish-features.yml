@@ -1,7 +1,7 @@
 name: Publish devcontainer Features
 
 # Packages everything under features/src and publishes each Feature as an OCI
-# artifact to ghcr.io/dever-labs/devx/<feature-id> (see
+# artifact to ghcr.io/dever-labs/<feature-id> (see
 # https://containers.dev/implementors/features-distribution/). Also opens a PR
 # with auto-generated Feature docs.
 on:
@@ -41,6 +41,7 @@ jobs:
         with:
           publish-features: "true"
           base-path-to-features: "./features/src"
+          features-namespace: "dever-labs"
           generate-docs: "true"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -10,7 +10,7 @@ Add it to your `devcontainer.json`:
 
 ```json
 "features": {
-    "ghcr.io/dever-labs/devx/devx:1": {}
+    "ghcr.io/dever-labs/devx:1": {}
 }
 ```
 
@@ -18,7 +18,7 @@ Pin to a specific devx release instead of the latest one:
 
 ```json
 "features": {
-    "ghcr.io/dever-labs/devx/devx:1": {
+    "ghcr.io/dever-labs/devx:1": {
         "version": "v1.2.3"
     }
 }
