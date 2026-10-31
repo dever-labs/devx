@@ -17,7 +17,8 @@ import (
 func runLogs(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "Follow logs")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseFlagsAnywhere(fs, args)
+	if err != nil {
 		return err
 	}
 
@@ -30,8 +31,8 @@ func runLogs(ctx context.Context, args []string) error {
 		return err
 	}
 
-	if fs.NArg() > 0 {
-		name := fs.Arg(0)
+	if len(positional) > 0 {
+		name := positional[0]
 		if _, ok := m.Tasks[name]; !ok {
 			return fmt.Errorf("unknown task %q", name)
 		}

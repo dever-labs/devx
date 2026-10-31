@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -229,6 +231,93 @@ func TestLookPathQuiet(t *testing.T) {
 	}
 	if lookPathQuiet("definitely-not-a-real-binary-xyz") {
 		t.Error("expected lookPathQuiet to return false for a nonexistent binary")
+	}
+}
+
+func TestParseFlagsAnywhere(t *testing.T) {
+	newFS := func() (*flag.FlagSet, *bool, *string) {
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		dryRun := fs.Bool("dry-run", false, "")
+		group := fs.String("group", "", "")
+		return fs, dryRun, group
+	}
+
+	cases := []struct {
+		name           string
+		args           []string
+		wantPositional []string
+		wantDryRun     bool
+		wantGroup      string
+	}{
+		{
+			name:           "flags before task name",
+			args:           []string{"--dry-run", "api"},
+			wantPositional: []string{"api"},
+			wantDryRun:     true,
+		},
+		{
+			name:           "flags after task name (issue #59)",
+			args:           []string{"api", "--dry-run"},
+			wantPositional: []string{"api"},
+			wantDryRun:     true,
+		},
+		{
+			name:           "value flag after task name",
+			args:           []string{"api", "--group", "backend"},
+			wantPositional: []string{"api"},
+			wantGroup:      "backend",
+		},
+		{
+			name:           "value flag with = after task name",
+			args:           []string{"api", "--group=backend"},
+			wantPositional: []string{"api"},
+			wantGroup:      "backend",
+		},
+		{
+			name:           "multiple task names around flags",
+			args:           []string{"api", "--dry-run", "worker"},
+			wantPositional: []string{"api", "worker"},
+			wantDryRun:     true,
+		},
+		{
+			name:           "double-dash separator",
+			args:           []string{"--dry-run", "--", "--looks-like-a-flag"},
+			wantPositional: []string{"--looks-like-a-flag"},
+			wantDryRun:     true,
+		},
+		{
+			name:           "no flags",
+			args:           []string{"api", "worker"},
+			wantPositional: []string{"api", "worker"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, dryRun, group := newFS()
+			positional, err := parseFlagsAnywhere(fs, tc.args)
+			if err != nil {
+				t.Fatalf("parseFlagsAnywhere(%v) error: %v", tc.args, err)
+			}
+			if !reflect.DeepEqual(positional, tc.wantPositional) {
+				t.Errorf("positional = %v, want %v", positional, tc.wantPositional)
+			}
+			if *dryRun != tc.wantDryRun {
+				t.Errorf("dryRun = %v, want %v", *dryRun, tc.wantDryRun)
+			}
+			if *group != tc.wantGroup {
+				t.Errorf("group = %q, want %q", *group, tc.wantGroup)
+			}
+		})
+	}
+}
+
+func TestParseFlagsAnywhere_UnknownFlagErrors(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	_, err := parseFlagsAnywhere(fs, []string{"api", "--not-a-real-flag"})
+	if err == nil {
+		t.Fatal("expected an error for an unknown flag")
 	}
 }
 

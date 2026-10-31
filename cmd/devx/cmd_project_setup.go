@@ -96,7 +96,7 @@ func runProjectSetup(ctx context.Context, args []string) error {
 
 func setupStatusIcon(status string) string {
 	switch status {
-	case "ok", "installed", "written":
+	case "ok", "installed", "written", "merged":
 		return "✓"
 	case "skipped", "not-applicable":
 		return "–"

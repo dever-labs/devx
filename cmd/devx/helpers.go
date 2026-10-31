@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,6 +87,54 @@ func newScheduler(m *config.Manifest, cliVars map[string]string, opts task.Optio
 	opts.LogDir = logDirPath()
 	opts.StateFile = stateFilePath()
 	return task.NewScheduler(m, opts)
+}
+
+// parseFlagsAnywhere lets flags declared on fs appear anywhere in args,
+// not just before the first positional argument — Go's flag.FlagSet
+// otherwise stops parsing at the first non-flag token (e.g. a task name),
+// so "devx up local --dry-run" would treat "--dry-run" as a second task
+// name instead of a flag (see issue #59). It partitions args into the
+// flag tokens (and their values, when not of the form --flag=value) and
+// the remaining positional tokens, parses the flag tokens with fs, and
+// returns the positional tokens untouched and in their original order.
+// A bare "--" stops flag scanning; everything after it is positional.
+func parseFlagsAnywhere(fs *flag.FlagSet, args []string) ([]string, error) {
+	var flagArgs, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if len(a) < 2 || a[0] != '-' {
+			positional = append(positional, a)
+			continue
+		}
+		flagArgs = append(flagArgs, a)
+		name := strings.TrimLeft(a, "-")
+		if strings.Contains(name, "=") {
+			// --flag=value already carries its own value.
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil {
+			// Unknown flag — let fs.Parse produce the usual error.
+			continue
+		}
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+			continue
+		}
+		// A non-bool flag consumes the next token as its value, unless
+		// there isn't one (fs.Parse will report the missing-value error).
+		if i+1 < len(args) {
+			flagArgs = append(flagArgs, args[i+1])
+			i++
+		}
+	}
+	if err := fs.Parse(flagArgs); err != nil {
+		return nil, err
+	}
+	return positional, nil
 }
 
 // parseCLIVars splits "KEY=VALUE" trailing arguments into a map, and

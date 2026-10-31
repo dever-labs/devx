@@ -189,6 +189,67 @@ func TestRunEnvFiles_MissingKeyInTemplateFails(t *testing.T) {
 	}
 }
 
+// TestRunEnvFiles_MergeModeAddsMissingKeysOnly is a regression test for
+// issue #61: mode: merge should append genuinely-new keys from the
+// rendered template to an existing output file, without touching any
+// keys the file already has (e.g. ones the user has since hand-edited).
+func TestRunEnvFiles_MergeModeAddsMissingKeysOnly(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "config.tmpl", "db_password={{.DB_PASSWORD}}\napi_url={{.API_URL}}\n")
+	writeTestFile(t, dir, "out.yaml", "db_password=hand-edited-value\n")
+
+	files := []config.EnvFile{{
+		Template: "config.tmpl",
+		Output:   "out.yaml",
+		Mode:     "merge",
+		Vars: []config.EnvVar{
+			{Name: "DB_PASSWORD", Default: "devpassword"},
+			{Name: "API_URL", Default: "http://localhost:8080"},
+		},
+	}}
+
+	results := RunEnvFiles(dir, files, Options{})
+	if results[0].Status != "merged" {
+		t.Fatalf("expected status merged, got %+v", results[0])
+	}
+
+	out, err := os.ReadFile(filepath.Join(dir, "out.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(out)
+	if !strings.Contains(content, "db_password=hand-edited-value") {
+		t.Errorf("expected existing key to be left untouched, got: %s", content)
+	}
+	if strings.Contains(content, "db_password=devpassword") {
+		t.Errorf("merge must not overwrite an existing key, got: %s", content)
+	}
+	if !strings.Contains(content, "api_url=http://localhost:8080") {
+		t.Errorf("expected the new key to be appended, got: %s", content)
+	}
+}
+
+// TestRunEnvFiles_MergeModeSkipsWhenNothingToAdd confirms merge mode
+// reports "skipped" (not "merged") when every rendered key already
+// exists in the output file.
+func TestRunEnvFiles_MergeModeSkipsWhenNothingToAdd(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "config.tmpl", "db_password={{.DB_PASSWORD}}\n")
+	writeTestFile(t, dir, "out.yaml", "db_password=already-here\n")
+
+	files := []config.EnvFile{{
+		Template: "config.tmpl",
+		Output:   "out.yaml",
+		Mode:     "merge",
+		Vars:     []config.EnvVar{{Name: "DB_PASSWORD", Default: "devpassword"}},
+	}}
+
+	results := RunEnvFiles(dir, files, Options{})
+	if results[0].Status != "skipped" {
+		t.Fatalf("expected status skipped when nothing new to add, got %+v", results[0])
+	}
+}
+
 func writeTestFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {

@@ -21,6 +21,7 @@ var reservedTopLevelKeys = map[string]bool{
 	"vars":     true,
 	"includes": true,
 	"agents":   true,
+	"default":  true,
 }
 
 // Manifest is the parsed, not-yet-merged shape of a single devx.yaml file.
@@ -49,6 +50,11 @@ type Manifest struct {
 	Includes map[string]string `yaml:"includes,omitempty"`
 	// Agents are named shell commands launchable via `devx workspace agent`.
 	Agents map[string]string `yaml:"agents,omitempty"`
+	// Default lists task and/or group names that a bare `devx up` (no
+	// explicit task names, no --group) runs, instead of every task in the
+	// manifest. Without it, bare `devx up` keeps running everything (the
+	// pre-existing behavior) — see issue #55.
+	Default []string `yaml:"default,omitempty"`
 	// Tasks holds every other top-level key, keyed by its own task name
 	// (not yet namespaced — see Load for the merged, namespaced result).
 	Tasks map[string]Task `yaml:"-"`
@@ -127,6 +133,13 @@ type Task struct {
 	Requires      []string          `yaml:"requires,omitempty"`
 	ContainerName string            `yaml:"containerName,omitempty"`
 	Scope         string            `yaml:"scope,omitempty"` // workspace (default) | shared
+	// Conflicts lists other task names this task is intentionally
+	// mutually exclusive with (e.g. a local identity provider vs. a mock
+	// bound to the same port). devx validate suppresses port-collision
+	// warnings between a task and any task named here — declaring it is
+	// just documentation plus a validate opt-out, devx never enforces
+	// that conflicting tasks aren't started together.
+	Conflicts []string `yaml:"conflicts,omitempty"`
 
 	// Name is the task's fully namespaced name (e.g. "infra:db"), filled
 	// in by Load. Not set when decoding a raw file in isolation.
@@ -187,6 +200,8 @@ func (m *Manifest) UnmarshalYAML(node *yaml.Node) error {
 			err = valNode.Decode(&m.Includes)
 		case "agents":
 			err = valNode.Decode(&m.Agents)
+		case "default":
+			err = valNode.Decode(&m.Default)
 		default:
 			var t Task
 			if decErr := valNode.Decode(&t); decErr != nil {

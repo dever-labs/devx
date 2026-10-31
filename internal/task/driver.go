@@ -225,11 +225,16 @@ func (d *containerDriver) Start(ctx context.Context, et *EffectiveTask, logPath 
 	if et.ContainerName == "" {
 		return nil, fmt.Errorf("task %q: run: looks like a container launch but no name could be parsed or overridden via containerName: — devx can't Stop()/exec into it later", et.Name)
 	}
-	runtime := "docker"
-	if strings.Contains(et.ResolvedRun, "podman") {
-		runtime = "podman"
+	return &containerHandle{name: et.ContainerName, runtime: runtimeForRun(et.ResolvedRun)}, nil
+}
+
+// runtimeForRun picks the CLI binary used to address a container-shaped
+// task by name (inspect/stop/logs/exec), inferred from run: text.
+func runtimeForRun(run string) string {
+	if strings.Contains(run, "podman") {
+		return "podman"
 	}
-	return &containerHandle{name: et.ContainerName, runtime: runtime}, nil
+	return "docker"
 }
 
 func (h *containerHandle) Wait(ctx context.Context) error { return nil }
@@ -372,6 +377,104 @@ func WaitReady(ctx context.Context, ready *config.ReadyCheck, dir string) error 
 	interval := 300 * time.Millisecond
 	for {
 		if err := CheckReady(ctx, ready, dir); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for readiness")
+		case <-time.After(interval):
+		}
+	}
+}
+
+// containerIP returns name's container-network IP address, as seen by
+// `docker/podman inspect`. Used by the DooD (Docker-outside-of-Docker)
+// readiness fallback: when devx itself runs in a devcontainer sharing the
+// host's docker socket, a `docker run -p hostPort:containerPort` task
+// publishes hostPort on the *host*, not on anything devx's own container
+// can reach as "localhost" — but siblings on the same docker daemon can
+// usually still reach each other directly by container IP (see #56).
+func containerIP(ctx context.Context, runtime, name string) (string, error) {
+	out, err := exec.CommandContext(ctx, runtime, "inspect",
+		"--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", name).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("inspect %s: %w", name, err)
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return "", fmt.Errorf("container %s has no network IP", name)
+	}
+	return ip, nil
+}
+
+// readyWithContainerIP rewrites a localhost/127.0.0.1-addressed TCP/HTTP
+// readiness check to target ip instead, leaving a ready.cmd: untouched
+// (the user wrote that command themselves — if it needs adjusting for
+// DooD, it already can be, e.g. via a docker exec probe). When
+// containerPort is known (parsed from a -p hostPort:containerPort
+// mapping), the port is rewritten too: the host-published port is rarely
+// reachable directly on the container's own IP — only its internal,
+// container-side port is.
+func readyWithContainerIP(ready *config.ReadyCheck, ip string, containerPort int) *config.ReadyCheck {
+	swapped := *ready
+	swapped.HTTP = swapHostWithIP(ready.HTTP, ip, containerPort)
+	swapped.TCP = swapHostWithIP(ready.TCP, ip, containerPort)
+	return &swapped
+}
+
+// swapHostWithIP replaces a "localhost"/"127.0.0.1" host in addr with ip,
+// and — when port > 0 — replaces the port digits immediately following it
+// too (works for both a bare "host:port" TCP address and a
+// "scheme://host:port/path" HTTP URL, since both put the port directly
+// after the host).
+func swapHostWithIP(addr, ip string, port int) string {
+	if addr == "" {
+		return addr
+	}
+	for _, host := range []string{"localhost", "127.0.0.1"} {
+		idx := strings.Index(addr, host)
+		if idx < 0 {
+			continue
+		}
+		rest := addr[idx+len(host):]
+		if port > 0 && strings.HasPrefix(rest, ":") {
+			j := 1
+			for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+				j++
+			}
+			rest = ":" + strconv.Itoa(port) + rest[j:]
+		}
+		return addr[:idx] + ip + rest
+	}
+	return addr
+}
+
+// CheckReadyContainerAware is CheckReady with a DooD-aware fallback: when
+// the plain check fails and the task is a named container, it retries
+// once against the container's own IP (and container-internal port, when
+// known) in place of localhost/127.0.0.1 (see containerIP). containerName
+// empty or ready.Cmd set skip the fallback entirely (cmd: is a check the
+// user already fully controls).
+func CheckReadyContainerAware(ctx context.Context, ready *config.ReadyCheck, dir, runtime, containerName string, containerPort int) error {
+	err := CheckReady(ctx, ready, dir)
+	if err == nil || ready == nil || ready.Cmd != "" || containerName == "" {
+		return err
+	}
+	ip, ierr := containerIP(ctx, runtime, containerName)
+	if ierr != nil {
+		return err
+	}
+	return CheckReady(ctx, readyWithContainerIP(ready, ip, containerPort), dir)
+}
+
+// WaitReadyContainerAware is WaitReady using CheckReadyContainerAware.
+func WaitReadyContainerAware(ctx context.Context, ready *config.ReadyCheck, dir, runtime, containerName string, containerPort int) error {
+	if ready == nil {
+		return nil
+	}
+	interval := 300 * time.Millisecond
+	for {
+		if err := CheckReadyContainerAware(ctx, ready, dir, runtime, containerName, containerPort); err == nil {
 			return nil
 		}
 		select {

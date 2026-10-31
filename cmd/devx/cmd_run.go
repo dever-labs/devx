@@ -12,11 +12,12 @@ func runRun(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "Print the resolved command, execute nothing")
 	watch := fs.Bool("watch", false, "Re-run whenever the task's sources: globs change")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseFlagsAnywhere(fs, args)
+	if err != nil {
 		return err
 	}
 
-	names, cliVars := parseCLIVars(fs.Args())
+	names, cliVars := parseCLIVars(positional)
 	if len(names) == 0 {
 		return listTasks()
 	}
