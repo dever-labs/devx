@@ -66,7 +66,7 @@ func runTasks(args []string) error {
 		for _, n := range names {
 			et := resolved[n]
 			jt := jsonTask{
-				Name: n, Desc: et.Desc, Group: et.Group, Deps: et.Deps,
+				Name: n, Desc: et.ResolvedDesc, Group: et.Group, Deps: et.Deps,
 				Run: et.ResolvedRun, Detached: et.Detached,
 				Env: task.RedactedEnv(et.ResolvedEnv), OS: et.OS,
 				Interactive: et.Interactive, Sources: et.Sources, Generates: et.Generates,
@@ -95,7 +95,7 @@ func runTasks(args []string) error {
 	}
 	for _, n := range names {
 		et := resolved[n]
-		desc := et.Desc
+		desc := et.ResolvedDesc
 		if desc == "" {
 			desc = et.ResolvedRun
 		}

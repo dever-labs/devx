@@ -15,6 +15,13 @@ type EnvFile struct {
 	// Output is the path (relative to this devx.yaml) the rendered
 	// template is written to. Skipped entirely if this file already exists.
 	Output string `yaml:"output"`
+	// Mode controls what happens when Output already exists: "" (default)
+	// leaves it untouched entirely; "merge" renders the template and
+	// appends any keys present in it but missing from Output, without
+	// ever overwriting a key the file already has. Both Output and any
+	// merged-in file are expected to be simple KEY=VALUE lines (.env
+	// style); merge is a no-op on a file it can't parse that way.
+	Mode string `yaml:"mode,omitempty"`
 	// Vars declares each template placeholder and how to resolve its value.
 	Vars []EnvVar `yaml:"vars"`
 }

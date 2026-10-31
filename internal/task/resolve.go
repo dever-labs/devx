@@ -158,10 +158,27 @@ func hostPortFromMapping(value string) (int, bool) {
 	return p, true
 }
 
+// containerPortFromMapping extracts the *container-internal* port from
+// the same docker -p value hostPortFromMapping reads — always the last
+// colon-separated field. This is what's actually reachable when devx
+// probes the container directly by IP (see readyWithContainerIP):
+// container IP:hostPort rarely works, since hostPort is only published on
+// the real host, not on the container's own listening socket.
+func containerPortFromMapping(value string) (int, bool) {
+	parts := strings.Split(value, ":")
+	last := strings.SplitN(parts[len(parts)-1], "/", 2)[0]
+	p, err := strconv.Atoi(last)
+	if err != nil {
+		return 0, false
+	}
+	return p, true
+}
+
 // InferredShape is what devx infers about a task purely from its run:
 // text, before any explicit field overrides are applied.
 type InferredShape struct {
 	Port          int
+	ContainerPort int
 	ContainerName string
 	IsContainer   bool
 	Detached      bool
@@ -176,6 +193,9 @@ func Infer(run string) InferredShape {
 	if m := portPattern.FindStringSubmatch(run); m != nil {
 		if p, ok := hostPortFromMapping(m[1]); ok {
 			shape.Port = p
+		}
+		if cp, ok := containerPortFromMapping(m[1]); ok {
+			shape.ContainerPort = cp
 		}
 	}
 	if m := namePattern.FindStringSubmatch(run); m != nil {
@@ -200,8 +220,10 @@ type EffectiveTask struct {
 	ResolvedRun   string
 	ResolvedEnv   map[string]string
 	ResolvedDir   string
+	ResolvedDesc  string
 	ResolvedReady *config.ReadyCheck
 	Port          int
+	ContainerPort int
 	Detached      bool
 	ContainerName string
 	IsContainer   bool
@@ -271,13 +293,23 @@ func Resolve(t config.Task, r *Resolver) (*EffectiveTask, error) {
 		detached = *t.Detached
 	}
 
+	// desc: is purely informational (shown in `devx tasks`/`devx status`),
+	// so an undefined ${VAR} there shouldn't fail resolution the way it
+	// would in run:/env:/ready: — fall back to the raw text instead.
+	desc := t.Desc
+	if resolvedDesc, derr := r.Substitute(t.Desc); derr == nil {
+		desc = resolvedDesc
+	}
+
 	return &EffectiveTask{
 		Task:          t,
 		ResolvedRun:   run,
 		ResolvedEnv:   env,
 		ResolvedDir:   dir,
+		ResolvedDesc:  desc,
 		ResolvedReady: ready,
 		Port:          port,
+		ContainerPort: shape.ContainerPort,
 		Detached:      detached,
 		ContainerName: containerName,
 		IsContainer:   shape.IsContainer,

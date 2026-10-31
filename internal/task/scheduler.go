@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -247,6 +248,25 @@ func (s *Scheduler) runOne(ctx context.Context, name string, backgroundDetached 
 			s.emit(name, "already running, skipping")
 			return nil
 		}
+	} else if !ok && et.Detached && et.IsContainer && et.ContainerName != "" && !s.Opts.DryRun {
+		// devx's own state file doesn't know about this task, but a
+		// container with this name may still exist from an interrupted
+		// prior run (killed, timed out) — adopt it if it's still running,
+		// or clear it out of the way so the upcoming `docker run --name`
+		// doesn't fail with "name already in use" (see issue #57).
+		adopted, err := s.adoptOrReclaimContainer(ctx, et)
+		if err != nil {
+			return fmt.Errorf("task %q: checking for an existing container named %q: %w", name, et.ContainerName, err)
+		}
+		if adopted {
+			s.State.Record(name, StateEntry{
+				ContainerName: et.ContainerName,
+				IsContainer:   true,
+				StartedAt:     time.Now(),
+			})
+			s.emit(name, "already running (untracked container), adopting")
+			return nil
+		}
 	}
 
 	if s.Opts.DryRun {
@@ -290,7 +310,7 @@ func (s *Scheduler) runOne(ctx context.Context, name string, backgroundDetached 
 	}()
 
 	if et.Detached {
-		if err := WaitReady(timeoutCtx, et.ResolvedReady, et.ResolvedDir); err != nil {
+		if err := s.waitReady(timeoutCtx, et); err != nil {
 			return fmt.Errorf("task %q: %w", name, err)
 		}
 		s.State.Record(name, StateEntry{
@@ -332,7 +352,7 @@ func stopTimeoutFor(et *EffectiveTask) time.Duration {
 
 func (s *Scheduler) probeExisting(ctx context.Context, et *EffectiveTask, existing StateEntry) bool {
 	if existing.IsContainer {
-		h := &containerHandle{name: existing.ContainerName, runtime: "docker"}
+		h := &containerHandle{name: existing.ContainerName, runtime: runtimeForRun(et.ResolvedRun)}
 		status, err := h.Status(ctx)
 		return err == nil && status == "running"
 	}
@@ -343,7 +363,55 @@ func (s *Scheduler) probeExisting(ctx context.Context, et *EffectiveTask, existi
 	if existing.PID > 0 && !processAlive(existing.PID) {
 		return false
 	}
-	return CheckReady(ctx, et.ResolvedReady, et.ResolvedDir) == nil
+	return s.checkReady(ctx, et) == nil
+}
+
+// checkReady is CheckReady, falling back to a container-IP-addressed
+// retry for named container tasks (see CheckReadyContainerAware) — this
+// is what makes readiness work from inside a Docker-outside-of-Docker
+// devcontainer, where a container's published port is only reachable on
+// the real host, not as "localhost" from devx's own container (#56).
+func (s *Scheduler) checkReady(ctx context.Context, et *EffectiveTask) error {
+	if et.IsContainer && et.ContainerName != "" {
+		return CheckReadyContainerAware(ctx, et.ResolvedReady, et.ResolvedDir, runtimeForRun(et.ResolvedRun), et.ContainerName, et.ContainerPort)
+	}
+	return CheckReady(ctx, et.ResolvedReady, et.ResolvedDir)
+}
+
+// waitReady is WaitReady, with the same container-IP-aware fallback as
+// checkReady.
+func (s *Scheduler) waitReady(ctx context.Context, et *EffectiveTask) error {
+	if et.IsContainer && et.ContainerName != "" {
+		return WaitReadyContainerAware(ctx, et.ResolvedReady, et.ResolvedDir, runtimeForRun(et.ResolvedRun), et.ContainerName, et.ContainerPort)
+	}
+	return WaitReady(ctx, et.ResolvedReady, et.ResolvedDir)
+}
+
+// adoptOrReclaimContainer checks whether a container named et.ContainerName
+// already exists from a previous, untracked devx up (devx's own state file
+// doesn't know about it — e.g. a prior run was killed before it could
+// record state). If it's still running, it's adopted as-is (not
+// restarted). If it exists but isn't running, it's removed so the
+// upcoming `docker run --name` doesn't fail with "name already in use".
+func (s *Scheduler) adoptOrReclaimContainer(ctx context.Context, et *EffectiveTask) (adopted bool, err error) {
+	rt := runtimeForRun(et.ResolvedRun)
+	h := &containerHandle{name: et.ContainerName, runtime: rt}
+	status, statusErr := h.Status(ctx)
+	if statusErr != nil {
+		// Status() itself only errors on a context/exec failure, not on
+		// "no such container" (which it reports as status "exited") — but
+		// guard anyway so a transient docker-CLI hiccup doesn't get
+		// treated as "the container doesn't exist, go ahead and remove it".
+		return false, nil
+	}
+	if status == "running" {
+		return true, nil
+	}
+	// Not running: either genuinely stopped, or never existed (Status
+	// reports "exited" for both). `rm -f` is a safe no-op in the latter
+	// case, so there's no need to disambiguate further.
+	_ = exec.CommandContext(ctx, rt, "rm", "-f", et.ContainerName).Run()
+	return false, nil
 }
 
 // processAlive reports whether pid refers to a live process, using

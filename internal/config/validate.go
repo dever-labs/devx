@@ -65,6 +65,24 @@ func Validate(m *Manifest) error {
 		issues = append(issues, validateTask(m, name, t)...)
 	}
 
+	if len(m.Default) > 0 {
+		groups := map[string]bool{}
+		for _, t := range m.Tasks {
+			if t.Group != "" {
+				groups[t.Group] = true
+			}
+		}
+		for _, d := range m.Default {
+			if _, ok := m.Tasks[d]; ok {
+				continue
+			}
+			if groups[d] {
+				continue
+			}
+			issues = append(issues, fmt.Sprintf("default: %q is not a known task or group: name", d))
+		}
+	}
+
 	if len(issues) > 0 {
 		return &ValidationError{Issues: issues}
 	}
@@ -81,6 +99,12 @@ func validateTask(m *Manifest, name string, t Task) []string {
 	for _, dep := range t.Deps {
 		if _, ok := m.Tasks[dep]; !ok {
 			issues = append(issues, fmt.Sprintf("task %q: deps references unknown task %q", name, dep))
+		}
+	}
+
+	for _, c := range t.Conflicts {
+		if _, ok := m.Tasks[c]; !ok {
+			issues = append(issues, fmt.Sprintf("task %q: conflicts references unknown task %q", name, c))
 		}
 	}
 
@@ -151,6 +175,9 @@ func ValidateEnvFiles(m *Manifest) error {
 		}
 		if f.Output == "" {
 			issues = append(issues, fmt.Sprintf("%s: output is required", label))
+		}
+		if f.Mode != "" && f.Mode != "merge" {
+			issues = append(issues, fmt.Sprintf("%s: mode must be empty or \"merge\"", label))
 		}
 		for j, v := range f.Vars {
 			if v.Name == "" {

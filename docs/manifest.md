@@ -41,6 +41,7 @@ dependencies with `devx run api`. See `devx help` for the full command list.
 | `version` | int | Always `1`. |
 | `project.name` | string | Project name. |
 | `vars` | map | Default `${VAR}` substitution values (see [Variable substitution](#variable-substitution)). |
+| `default` | list | Task names and/or `group:` names run by a bare `devx up` (no explicit task names or `--group`). Each entry must match a known task name or a `group:` value used by at least one task — `devx validate` rejects anything else. Omitted (the default): bare `devx up` still runs every task, unchanged. |
 | `includes` | map | Merge another `devx.yaml`'s tasks into this graph (see [Includes](#includes)). |
 | `agents` | map | Named shell commands for the planned `devx workspace` feature (parallel per-branch workspaces with an AI coding agent auto-started on creation). Reserved and parsed today; not yet wired to a CLI command — see `docs/design/task-executor-refactor.md`. |
 | `ai` | object | Optional LLM provider config used by `devx ai`. See `docs/ai.md`-equivalent comments in `schemas/devx.schema.json`. Credentials always come from environment variables, never from `devx.yaml`. |
@@ -75,7 +76,7 @@ worker:
 | Field | Type | Description |
 |---|---|---|
 | `run` | string | Shell command, executed via the system shell (`sh -c` on Linux/macOS, `cmd /C` on Windows). |
-| `desc` | string | One-line description shown in `devx tasks`. |
+| `desc` | string | One-line description shown in `devx tasks`. Supports `${VAR}` substitution, same as `run:`/`env:`/`dir:` (falls back to the raw, unsubstituted text if a referenced variable is undefined, since `desc:` is purely informational and shouldn't be able to break `devx tasks`). |
 | `deps` | list | Task names that must complete (one-shot) or become ready (detached) before this task starts. `devx up`/`devx run <name>` compute the transitive closure and run independent tasks in parallel, level by level. |
 | `dir` | string | Working directory for `run:`, relative to the `devx.yaml` that defines the task. Defaults to that file's own directory. |
 | `env` | map | Environment variables merged into the task's process environment (after `${VAR}` substitution). |
@@ -83,7 +84,7 @@ worker:
 | `interactive` | bool | `true` attaches the task directly to the terminal's stdin/stdout/stderr (e.g. a shell, a REPL) — only valid when running that one task alone (`devx run <name>`), not as part of a larger `devx up`. Cannot be combined with `detached: true`. |
 | `ready` | object | How devx decides a detached task has become ready — see [Readiness](#readiness). |
 | `port` | int | Port this task listens on, used for `devx validate`'s port-collision check. Inferred from `run:` (`-p`, `--port`, `--publish`) when omitted. |
-| `containerName` | string | Overrides the container name devx infers from `run:`, used by `devx down`/`logs`/`exec`/`status` to address the right container. Set explicitly if the name can't be parsed automatically. |
+| `containerName` | string | Overrides the container name devx infers from `run:`, used by `devx down`/`logs`/`exec`/`status` to address the right container. Set explicitly if the name can't be parsed automatically. If a container with this name already exists from an earlier, untracked `devx up` (e.g. devx was killed before recording state), devx adopts it in place if it's still running, or removes it first (`rm -f`) if it's stopped — either way, `devx up` never fails with "name already in use". |
 | `requires` | list | Binaries that must be on `PATH` for this task to run — checked by `devx doctor`. |
 | `sources` / `generates` | list of globs | Skip re-running a one-shot task when every `generates:` file is newer than every `sources:` file (like a Makefile rule). `generates:` is invalid on a detached task. |
 | `os` | list | Restrict this task to `linux`/`darwin`/`windows` (`macos` accepted as an alias for `darwin`); skipped (not an error) on any other OS. |
@@ -92,6 +93,7 @@ worker:
 | `restart` | `never` \| `on-failure` \| `always` | Only meaningful on a detached task. Defaults to `never`. **Reserved for a later phase**: devx validates and persists this field today, but does not yet watch a detached task's process/container for exit and restart it — a crashed task simply stays dead regardless of `restart:`. |
 | `shell` | string | Override the shell used to execute `run:`. |
 | `group` | string | Logical group name, used by `devx up --group <name>` to start a subset of the graph. |
+| `conflicts` | list | Other task names this one is intentionally mutually exclusive with (e.g. dev vs. prod variants sharing a port). Suppresses `devx validate`'s port-collision warning for declared pairs; each entry must match a known task name. |
 | `scope` | `workspace` \| `shared` | Defaults to `workspace`. A `shared` task may not reference `${workspace}`/`${port}`-style per-workspace substitutions, since it's meant to be started once and reused across workspaces (see the workspace/agents design). |
 
 ### Readiness
@@ -109,6 +111,16 @@ Set at most one of `http`/`tcp`/`cmd`. When `ready:` is omitted entirely, devx i
 check from the task's `run:` text (an exposed port implies a TCP check against
 `localhost:<port>`). If nothing can be inferred and the task is detached, `devx validate`
 warns — add `ready:` or `port:` explicitly.
+
+**Docker-outside-of-Docker (DooD) fallback:** if devx itself is running inside a
+container sharing the host's Docker socket (e.g. a devcontainer), an `http`/`tcp` check
+addressed at `localhost`/`127.0.0.1` may fail even though the target container is healthy
+— the host-published port isn't reachable as "localhost" from a sibling container. For a
+container-shaped, named task (`containerName:` set or inferred), devx automatically
+retries a failed `http`/`tcp` check once against the container's own network IP (and its
+internal port, when parseable from a `-p hostPort:containerPort` mapping) before giving
+up. This is fully automatic — no manifest changes needed — and only applies to `http`/
+`tcp`; a `cmd:` check is never rewritten, since you already fully control it.
 
 ### Variable substitution
 
@@ -215,6 +227,7 @@ envFiles:
   - name: local app config
     template: app-config.local.yaml.tmpl
     output: app-config.local.yaml
+    # mode: merge   # append new keys to an existing output file instead of skipping it
     vars:
       - name: DB_PASSWORD
         envVar: DB_PASSWORD      # checked first; defaults to the var's name
@@ -242,11 +255,22 @@ api:
    a terminal (e.g. CI), so a missing value fails fast instead of hanging
 3. `default:`
 
-It's an error for a var to resolve from none of those. **`output:` is only ever created,
-never overwritten** — once the file exists, `devx init` (even with `--fix`) reports that
-entry as `skipped` and leaves it untouched, so a developer's already-filled-in local
-secrets/config are never clobbered. Add `output:`'s path to `.gitignore` yourself; devx
-does not do this automatically since the path is project-defined.
+It's an error for a var to resolve from none of those. **By default, `output:` is only
+ever created, never overwritten** — once the file exists, `devx init` (even with `--fix`)
+reports that entry as `skipped` and leaves it untouched, so a developer's already-filled-in
+local secrets/config are never clobbered. Add `output:`'s path to `.gitignore` yourself;
+devx does not do this automatically since the path is project-defined.
+
+Set `mode: merge` on an entry to change that behavior: instead of skipping an existing
+`output:` entirely, devx renders the template and appends only the `KEY=VALUE` lines whose
+key isn't already present in the file — every existing key (including ones the developer
+has since hand-edited) is left untouched. This is meant for files that legitimately grow
+new keys over time (e.g. a shared `.env` that gains new required vars as the project
+evolves), reported as `merged` rather than `written`/`skipped`. `devx up` also runs
+`envFiles:` as a best-effort, non-interactive step before starting the graph, so a `mode:
+merge` entry's new keys show up automatically on the next `devx up` without a separate
+`devx init`/`devx setup` run; failures here are reported as warnings and never block `devx
+up`.
 
 `secret: true` is documentation only — it doesn't log the resolved value, but terminal
 input typed at the `prompt:` is not hidden. For real secrets, prefer setting `envVar:`
@@ -256,10 +280,13 @@ from your existing secrets manager (1Password CLI, Vault, etc.) rather than prom
 
 ## CLI commands
 
+Flags for `devx up`/`devx run`/`devx logs` can appear anywhere in the argument list —
+before, after, or interspersed with task names (e.g. both `devx up --dry-run api` and
+`devx up api --dry-run` work identically).
 
 | Command | Description |
 |---|---|
-| `devx up` | Run every task, respecting `deps:` — parallel within each dependency level. |
+| `devx up` | Run every task, respecting `deps:` — parallel within each dependency level. If the manifest sets `default:`, a bare `devx up` (no task names, no `--group`) runs only those targets instead. |
 | `devx up --group <name>` | Only start tasks with `group: <name>` (and their deps). |
 | `devx up --dry-run` | Print the planned execution order without running anything. |
 | `devx run <name>` | Run one task and its transitive `deps:` only. |
@@ -275,14 +302,23 @@ from your existing secrets manager (1Password CLI, Vault, etc.) rather than prom
 | `devx init` | Interactive scaffold for a new project; also runs `setup:` steps (installs tools, runs host-side setup, scaffolds `envFiles:`). |
 | `devx new <name>` | Append a new task skeleton to `devx.yaml`. |
 
-`devx validate` additionally warns (and exits non-zero) on:
+`devx validate` additionally prints (but does not fail on) warnings for:
 - A task name colliding with a built-in command name (`devx <name>` would always run the
-  built-in, never the task).
+  built-in, never the task — use `devx run <name>` to run it explicitly).
 - A detached task with no inferrable `ready:`/`port:`.
-- A container task (`run:` contains `docker run`/`docker compose`/`podman run`) whose
-  container name couldn't be parsed and no `containerName:` override was set — `devx
-  down`/`exec`/`logs`/`status` would have nothing to act on.
-- Two tasks inferring (or declaring) the same port.
+- A **detached** container task (`run:` contains `docker run`/`docker compose`/`podman
+  run` *and* looks long-running, e.g. `-d`/`--detach`) whose container name couldn't be
+  parsed and no `containerName:` override was set — `devx down`/`exec`/`logs`/`status`
+  would have nothing to act on. A one-shot container (no `-d`/`--detach`) never triggers
+  this, since nothing persists afterward anyway.
+- Two or more tasks inferring (or declaring) the same port, unless every pairwise
+  collision among them is covered by `conflicts:` declarations (see the task field
+  reference above).
+
+These are warnings, not errors — `devx validate` only exits non-zero on structural
+problems (missing `run:`, an unknown task referenced by `deps:`/`default:`/`conflicts:`,
+etc.), reported separately from the warnings list (as a `warnings` field alongside
+`issues` in `--json` mode).
 
 ---
 

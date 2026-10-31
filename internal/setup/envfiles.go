@@ -32,8 +32,12 @@ func runEnvFile(dir string, f config.EnvFile, opts Options) Result {
 	}
 
 	outPath := filepath.Join(dir, f.Output)
+	exists := false
 	if _, err := os.Stat(outPath); err == nil {
-		return Result{Name: name, Type: "envFile", Status: "skipped", Detail: f.Output + " already exists"}
+		exists = true
+		if f.Mode != "merge" {
+			return Result{Name: name, Type: "envFile", Status: "skipped", Detail: f.Output + " already exists"}
+		}
 	}
 
 	tmplData, err := os.ReadFile(filepath.Join(dir, f.Template))
@@ -55,6 +59,10 @@ func runEnvFile(dir string, f config.EnvFile, opts Options) Result {
 		return Result{Name: name, Type: "envFile", Status: "failed", Detail: "rendering template: " + err.Error()}
 	}
 
+	if exists {
+		return mergeEnvFile(name, f.Output, outPath, rendered.String())
+	}
+
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return Result{Name: name, Type: "envFile", Status: "failed", Detail: "creating output directory: " + err.Error()}
 	}
@@ -64,6 +72,79 @@ func runEnvFile(dir string, f config.EnvFile, opts Options) Result {
 	}
 
 	return Result{Name: name, Type: "envFile", Status: "written", Detail: f.Output}
+}
+
+// mergeEnvFile appends to existing (KEY=VALUE per line) any key present in
+// rendered but missing from existing, without touching a key existing
+// already has — so a value a developer has customized locally is never
+// overwritten, only genuinely new keys (e.g. one added to the template
+// after the developer's file was created) are added.
+func mergeEnvFile(name, outputRel, outPath, rendered string) Result {
+	existingData, err := os.ReadFile(outPath)
+	if err != nil {
+		return Result{Name: name, Type: "envFile", Status: "failed", Detail: "reading existing output: " + err.Error()}
+	}
+	existingKeys := envFileKeys(string(existingData))
+
+	var added []string
+	var toAppend strings.Builder
+	for _, line := range strings.Split(rendered, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, _, ok := strings.Cut(trimmed, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if _, ok := existingKeys[key]; ok {
+			continue
+		}
+		existingKeys[key] = struct{}{}
+		added = append(added, key)
+		toAppend.WriteString(line)
+		toAppend.WriteString("\n")
+	}
+
+	if len(added) == 0 {
+		return Result{Name: name, Type: "envFile", Status: "skipped", Detail: outputRel + " already has every key"}
+	}
+
+	f, err := os.OpenFile(outPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return Result{Name: name, Type: "envFile", Status: "failed", Detail: "opening existing output: " + err.Error()}
+	}
+	defer f.Close()
+	if !strings.HasSuffix(string(existingData), "\n") {
+		if _, err := f.WriteString("\n"); err != nil {
+			return Result{Name: name, Type: "envFile", Status: "failed", Detail: "appending to output: " + err.Error()}
+		}
+	}
+	if _, err := f.WriteString(toAppend.String()); err != nil {
+		return Result{Name: name, Type: "envFile", Status: "failed", Detail: "appending to output: " + err.Error()}
+	}
+
+	return Result{Name: name, Type: "envFile", Status: "merged", Detail: fmt.Sprintf("%s: added %s", outputRel, strings.Join(added, ", "))}
+}
+
+// envFileKeys parses KEY=VALUE lines ('#' comments/blank lines ignored)
+// and returns the set of keys present, ignoring values entirely — used
+// only to decide which keys mergeEnvFile still needs to add.
+func envFileKeys(data string) map[string]struct{} {
+	keys := map[string]struct{}{}
+	for _, line := range strings.Split(data, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, _, ok := strings.Cut(trimmed, "=")
+		if !ok {
+			continue
+		}
+		keys[strings.TrimSpace(key)] = struct{}{}
+	}
+	return keys
 }
 
 // resolveEnvVars resolves each var's value, in priority order: an OS

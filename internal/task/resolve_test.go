@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/dever-labs/devx/internal/config"
 )
 
 func TestSubstitute_BasicAndEscape(t *testing.T) {
@@ -149,5 +151,36 @@ func TestRedactedEnv_EmptyMap(t *testing.T) {
 	out := RedactedEnv(map[string]string{})
 	if len(out) != 0 {
 		t.Errorf("RedactedEnv(empty) = %+v, want empty map", out)
+	}
+}
+
+// TestResolve_DescSubstitution is a regression test for issue #60: a
+// ${VAR} reference inside desc: was never passed through the resolver,
+// so it showed up literally in `devx tasks` output instead of being
+// substituted like run:/env:/dir: are.
+func TestResolve_DescSubstitution(t *testing.T) {
+	r := NewResolver(nil, nil, map[string]string{"ENVIRONMENT": "staging"})
+	et, err := Resolve(config.Task{Name: "api", Run: "echo hi", Desc: "Deploys to ${ENVIRONMENT}"}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if et.ResolvedDesc != "Deploys to staging" {
+		t.Errorf("ResolvedDesc = %q, want %q", et.ResolvedDesc, "Deploys to staging")
+	}
+}
+
+// TestResolve_DescSubstitution_UndefinedVarFallsBack confirms that an
+// undefined variable in desc: falls back to the raw text instead of
+// failing resolution entirely — desc: is purely informational, so it
+// shouldn't be able to break `devx up`/`devx tasks` the way a bad run:/
+// env: substitution legitimately should.
+func TestResolve_DescSubstitution_UndefinedVarFallsBack(t *testing.T) {
+	r := NewResolver(nil, nil, nil)
+	et, err := Resolve(config.Task{Name: "api", Run: "echo hi", Desc: "Uses ${UNDEFINED_VAR}"}, r)
+	if err != nil {
+		t.Fatalf("Resolve should not fail on an undefined var in desc:, got %v", err)
+	}
+	if et.ResolvedDesc != "Uses ${UNDEFINED_VAR}" {
+		t.Errorf("ResolvedDesc = %q, want raw desc text preserved as fallback", et.ResolvedDesc)
 	}
 }

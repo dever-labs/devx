@@ -21,6 +21,11 @@
       "description": "Plain textual ${VAR} substitution defaults. Lowest priority in the CLI override > inherited env > .env/.env.local > vars: chain.",
       "additionalProperties": { "type": "string" }
     },
+    "default": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Task names and/or group: names run by a bare 'devx up' (no explicit names or --group). Each entry must match a known task name or a group: value used by at least one task. When omitted, bare 'devx up' still runs every task (unchanged default behavior)."
+    },
     "includes": {
       "type": "object",
       "description": "Merges another devx.yaml's tasks into this one's graph, namespaced as \"<name>:<task>\". Not a recursive sub-process per file — one flat merged graph.",
@@ -112,7 +117,12 @@
         "properties": {
           "name": { "type": "string", "description": "Shown in 'devx setup' output. Defaults to output." },
           "template": { "type": "string", "description": "Path to a Go text/template file, relative to this devx.yaml. Vars are available as {{.VAR_NAME}}." },
-          "output": { "type": "string", "description": "Path the rendered template is written to, relative to this devx.yaml. Skipped if this file already exists." },
+          "output": { "type": "string", "description": "Path the rendered template is written to, relative to this devx.yaml. Skipped (mode omitted/\"\") or merged (mode: merge) if this file already exists." },
+          "mode": {
+            "type": "string",
+            "enum": ["", "merge"],
+            "description": "\"\" (default): create-only, never touches an existing output file. \"merge\": appends only genuinely-new KEY=VALUE lines from the rendered template, leaving every existing key in the output file untouched."
+          },
           "vars": {
             "type": "array",
             "items": {
@@ -195,6 +205,11 @@
           },
           "shell": { "type": "string", "description": "Overrides the shell used to run run: (defaults to sh -c on Unix, cmd /C on Windows)." },
           "group": { "type": "string", "description": "Logical grouping used by 'devx up --group <name>' to run a subset of the graph." },
+          "conflicts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Other task names this task is intentionally mutually exclusive with (e.g. dev vs. prod variants sharing a port). Suppresses devx validate's port-collision warning for declared pairs; each entry must match a known task name."
+          },
           "scope": {
             "type": "string",
             "enum": ["workspace", "shared"],
