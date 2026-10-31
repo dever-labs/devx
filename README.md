@@ -39,13 +39,6 @@ brew tap dever-labs/tap https://github.com/dever-labs/homebrew-tap
 brew install --cask devx
 ```
 
-**Dev Containers**
-```json
-"features": {
-    "ghcr.io/dever-labs/devx/devx:1": {}
-}
-```
-
 Pre-built binaries for all platforms are also available on the
 [Releases](https://github.com/dever-labs/devx/releases) page — download, make
 executable, and place on your `PATH`.
