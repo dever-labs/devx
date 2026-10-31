@@ -89,6 +89,12 @@ tests/integration/  — end-to-end tests (build tag: integration)
 - Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/)
   (`feat:`, `fix:`, `chore:`, etc.) — releases are automated via release-please,
   which derives version bumps and the changelog directly from these prefixes.
+- **One fix/issue per commit, one fix/issue per PR.** Never batch several unrelated
+  fixes or issues into a single commit or a single PR, even if squash-merged —
+  release-please generates exactly one changelog entry per commit, so batching
+  collapses several distinct fixes into one vague changelog line and hides real
+  release scope. If you're addressing multiple issues, open a separate branch/PR
+  per issue and merge each independently.
 - Add or update tests for any behaviour you change.
 - Update relevant docs under `docs/` if the change affects user-facing behaviour.
 
