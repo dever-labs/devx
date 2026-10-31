@@ -8,7 +8,9 @@
   "options": {
     "version": {
       "type": "string",
-      "proposals": ["latest"],
+      "proposals": [
+        "latest"
+      ],
       "default": "latest",
       "description": "devx version to install, e.g. 'v1.2.3' or 'latest'."
     }
