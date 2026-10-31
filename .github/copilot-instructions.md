@@ -4,9 +4,11 @@ Guidance for AI coding agents (GitHub Copilot and others) working in this reposi
 
 ## What this repo is
 
-`devx` is a single Go binary (`cmd/devx`) that orchestrates local dev environments
-from a declarative `devx.yaml` manifest. Core logic lives under `internal/`; the
-CLI is a thin layer in `cmd/devx/cmd_*.go` (one file per subcommand).
+`devx` is a single Go binary (`cmd/devx`) that runs a declarative, task-based
+`devx.yaml` manifest directly (`run:` commands execute as processes or
+containers — devx never renders to docker-compose/Kubernetes/Helm/Terraform).
+Core logic lives under `internal/`; the CLI is a thin layer in
+`cmd/devx/cmd_*.go` (one file per subcommand).
 
 ## Build, test, lint
 
@@ -24,27 +26,42 @@ before falling back to the full `go test ./...`.
 ## Project layout
 
 ```
-cmd/devx/           CLI entry point; one cmd_<name>.go per subcommand
-internal/config/    devx.yaml parsing and validation
-internal/compose/   Docker Compose rendering + telemetry stack
-internal/runtime/   container runtime abstraction (Docker, Podman)
-internal/k8s/       Kubernetes manifest rendering
-internal/graph/     dependency graph / topological sort
-internal/lock/      lockfile (devx.lock) management
-internal/doctor/    tool/health checks for `devx doctor`
-internal/setup/     tool install, host-side setup steps, envFiles generation
-internal/detect/    tool versions/JS workspaces inferred from repo files
-internal/process/   detached process supervisor (state in .devx/processes.json)
-internal/ready/     HTTP/TCP readiness probes
-internal/ai/         LLM client (openai, anthropic, azure-openai, ollama)
-internal/providers/ third-party dependency provider plugins
-internal/plugins/   plugin discovery/execution
-docs/               user-facing docs (install.md, manifest.md, telemetry.md)
-examples/           complete working project examples
+cmd/devx/           CLI entry point; one cmd_<name>.go per subcommand (up/down/run/
+                    exec/status/logs/doctor/validate/tasks/init/ai/dev/update/...)
+internal/config/    devx.yaml parsing/validation (manifest.go, tools.go, validate.go,
+                    envfile.go)
+internal/task/      the task execution engine: ${VAR} substitution and readiness/
+                    detached/port inference from run: text (resolve.go), the
+                    Driver/Handle abstraction over processes and containers
+                    (driver.go + driver_unix.go/driver_windows.go), and the
+                    scheduler that walks the dependency graph for devx up/run/down
+                    (scheduler.go)
+internal/graph/     generic dependency graph / topological sort, used by internal/task
+internal/runtime/   container runtime abstraction (internal/runtime/docker,
+                    internal/runtime/podman)
+internal/doctor/    tool/host health checks for `devx doctor`
+internal/setup/     tool install, host-side setup steps, envFiles scaffolding
+                    (envfiles.go), setup state tracking
+internal/detect/    package-manager/JS-workspace/tool-version inference from repo files
+internal/localai/   AI backend client + model/config management for `devx ai` (OpenAI,
+                    Anthropic, Azure OpenAI, Ollama, local, remote, Copilot)
+internal/testexec/  cross-platform fake "runtime binary" harness used by unit tests
+internal/ui/        terminal output helpers
+internal/util/      small generic helpers (maps, etc.)
+docs/               user-facing docs (install.md, manifest.md)
+examples/           complete working project examples (examples/basic)
 schemas/            JSON Schema for devx.yaml (validate with any editor via the
                     `# yaml-language-server: $schema=...` header devx writes into devx.yaml)
 tests/integration/  end-to-end CLI tests (build tag: integration)
 ```
+
+Note: an earlier design explored rendering devx.yaml to docker-compose/Kubernetes
+manifests with provider/plugin dependency management (`devx render`/`devx lock`/
+`devx providers`/`devx export`). That direction was abandoned in favor of the
+task-based model above — those CLI subcommands exist only as `cmd_removed.go`
+stubs that print an explanatory error; don't reintroduce `internal/compose`,
+`internal/k8s`, `internal/lock`, `internal/providers`, or `internal/plugins`
+packages without first confirming the direction has actually changed again.
 
 ## Conventions
 
@@ -53,8 +70,7 @@ tests/integration/  end-to-end CLI tests (build tag: integration)
   a result struct and prints it alone to stdout (see `cmd_status.go`, `cmd_doctor.go`). Human-readable
   output goes to stdout, error/diagnostic text goes to stderr. When adding a new command, prefer adding
   `--json` output from the start so agents can consume it without scraping text.
-- Secrets are never written to `devx.yaml`; they're read from environment variables at runtime
-  (see `internal/ai/ai.go` header comment for the exact env var per provider).
+- Secrets are never written to `devx.yaml`; they're read from environment variables at runtime.
 - `schemas/devx.schema.json` is hand-maintained (no generator) and must be kept in sync with
   `internal/config/manifest.go` / `internal/config/tools.go` whenever the manifest shape changes.
 - All generated runtime artifacts go under `.devx/` (gitignored) — do not write generated files elsewhere.
@@ -68,9 +84,15 @@ tests/integration/  end-to-end CLI tests (build tag: integration)
   exactly one changelog entry per commit, so batching collapses several distinct fixes into one
   vague changelog line and hides real release scope. If addressing multiple issues, open a
   separate branch/PR per issue and merge each independently.
+- Before relying on any description of this codebase's structure (including this file), verify
+  directories/packages actually exist (`ls`, `grep`) — this file previously went stale relative
+  to a major architecture refactor and was corrected only after a manual review caught it.
 
 ## Useful entry points when exploring
 
 - `cmd/devx/main.go` — command dispatch table.
 - `cmd/devx/helpers.go` — shared helpers (manifest loading, runtime selection, `.devx` paths).
 - `internal/config/` — start here to understand the manifest shape before changing CLI behavior.
+- `internal/task/resolve.go`, `internal/task/scheduler.go` — start here to understand how
+  devx up/run/down actually execute a manifest.
+
