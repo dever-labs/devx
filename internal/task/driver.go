@@ -222,7 +222,14 @@ func (d *containerDriver) Start(ctx context.Context, et *EffectiveTask, logPath 
 	if err != nil {
 		return nil, fmt.Errorf("start task %q: %w: %s", et.Name, err, string(out))
 	}
-	if et.ContainerName == "" {
+	// A detached container needs a name: it outlives this Start() call,
+	// and every later operation (Stop/Status/Logs/Exec, including a
+	// future `devx down`/`devx exec`) addresses it purely by name. A
+	// one-shot container (no -d/--detach) already ran to completion
+	// above (CombinedOutput blocked until exit) and nothing will ever
+	// need to reach it again, so a missing name is harmless here —
+	// matches the devx validate false-positive exception for issue #58.
+	if et.ContainerName == "" && et.Detached {
 		return nil, fmt.Errorf("task %q: run: looks like a container launch but no name could be parsed or overridden via containerName: — devx can't Stop()/exec into it later", et.Name)
 	}
 	return &containerHandle{name: et.ContainerName, runtime: runtimeForRun(et.ResolvedRun)}, nil
