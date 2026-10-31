@@ -1,6 +1,6 @@
 {
   "id": "cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "devx CLI",
   "description": "Installs devx, a CLI that orchestrates local dev environments (containers, processes, Kubernetes) from a declarative devx.yaml manifest.",
   "documentationURL": "https://github.com/dever-labs/devx/blob/main/docs/install.md",
