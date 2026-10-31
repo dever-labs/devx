@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ---
 
+## [1.0.1](https://github.com/dever-labs/devx/compare/v1.0.0...v1.0.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **ci:** publish devx Feature to ghcr.io/dever-labs/features/devx ([#75](https://github.com/dever-labs/devx/issues/75)) ([f4b0c08](https://github.com/dever-labs/devx/commit/f4b0c0814249d211e9b8f060cc2a0c9a6afc0501))
+* **ci:** rename Feature id to 'cli' to avoid devx/devx path duplication ([#77](https://github.com/dever-labs/devx/issues/77)) ([af53e1c](https://github.com/dever-labs/devx/commit/af53e1c4ee29a0d5dbc0ae194837cb73a9e0cbee))
+
 ## [1.0.0](https://github.com/dever-labs/devx/compare/v0.1.7...v1.0.0) (2026-10-31)
 
 
