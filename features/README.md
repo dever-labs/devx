@@ -31,7 +31,7 @@ container.
 
 ## Publishing
 
-Features are packaged and pushed to `ghcr.io/dever-labs/devx/<feature-id>` by
+Features are packaged and pushed to `ghcr.io/dever-labs/<feature-id>` by
 `.github/workflows/publish-features.yml` whenever `features/src/**` changes on
 `main`. Bump the `version` in `features/src/devx/devcontainer-feature.json`
 (semver) to publish a new Feature version — the publish action skips versions
