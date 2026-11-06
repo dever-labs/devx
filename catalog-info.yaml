@@ -1,0 +1,38 @@
+# Describes this repository in devhub (https://hub.dever.dk), dever-labs'
+# developer portal. devhub's GitHub discovery reads this file from the
+# default branch; docs come from docs/ (backstage.io/techdocs-ref).
+#   devhub/install  how to install it (Install card), <channel>:<id>, comma-separated
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: devx
+  namespace: devtools
+  title: devx
+  description: Cross-platform dev task orchestrator — one devx.yaml, run the same locally, in CI and in devcontainers.
+  annotations:
+    github.com/project-slug: dever-labs/devx
+    backstage.io/techdocs-ref: dir:.
+spec:
+  owner: group:devtools/engineering
+  domain: domain:devtools/devtools
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: devx
+  namespace: devtools
+  title: devx
+  description: >
+    Single-binary CLI (cmd/devx) that runs a dependency-ordered graph of dev
+    tasks from devx.yaml; also published as the devcontainer feature
+    ghcr.io/dever-labs/devx/cli.
+  annotations:
+    github.com/project-slug: dever-labs/devx
+    backstage.io/techdocs-ref: dir:.
+    devhub/install: brew-cask:dever-labs/tap/devx,scoop:dever-labs/devx
+  tags: [go, cli]
+spec:
+  type: tool
+  lifecycle: production
+  owner: group:devtools/engineering
+  system: system:devtools/devx
