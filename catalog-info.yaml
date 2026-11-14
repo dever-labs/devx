@@ -12,6 +12,11 @@ metadata:
   annotations:
     github.com/project-slug: dever-labs/devx
     backstage.io/techdocs-ref: dir:.
+  # Solution-level docs (dever-labs/wiki, staff only); this repo's docs cover the repo.
+  links:
+    - url: https://hub.dever.dk/docs/shared/component/wiki/Dever/Products/devx/Overview/
+      title: Solution docs (wiki)
+      icon: docs
 spec:
   owner: group:devtools/engineering
   domain: domain:devtools/devtools
