@@ -28,7 +28,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Lint
-        uses: golangci/golangci-lint-action@80a417e6155c5cdf37eb2391cf7785a64fbb9ae0 # node24
+        uses: golangci/golangci-lint-action@17ebc353996a2841dc0b207c184c1722a219b928 # node24
 
   test:
     name: Test
